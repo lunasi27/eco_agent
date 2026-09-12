@@ -256,7 +256,7 @@ State 字段遵循**分类原则**：只有图的条件边/路由函数需要读
 
 6. 根据校验结果决定流转：
    - **全部校验通过** → phase_status["init"] = "done"，条件边路由至 `run_eco_route`
-   - **有校验失败**（如 netlist 不存在、EDA license 失效、目录权限不足）→ 设置 `step_status["init"] = "error"` + `phase_status["init"] = "error"` + `error_msg`，条件边路由至 Error Handler
+   - **有校验失败**（如 netlist 不存在、EDA license 失效、目录权限不足）→ 设置 `step_status["init"] = "error"` + `phase_status["init"] = "error"` + `current_step = "init"` + `current_phase = "init"` + `error_msg`，条件边路由至 Error Handler
 
 #### 输出更新字段
 
@@ -397,7 +397,7 @@ def node_phase2_summary(state: ECOState):
             "current_step": "run_sta",
         }
     # PV/Signoff error 不是阻断级 → 继续进中断1，展示警告
-    # （phase_status["phase2"] 保持 "running" 不变，_run_step 已标记 step_status）
+    # 如果 run_sta 成功，显式设 phase_status["phase2"] = "done"（覆盖 PV/Signoff error 可能留下的 error 标记），确保状态一致性
     # 构建 interrupt_msg 时把 PV/Signoff error 当警告展示
     ...
 ```
@@ -891,7 +891,9 @@ builder.add_edge("run_signoff", "phase2_summary")
 
 # phase2_summary → Phase3 分支（根据 user_fix_strategy）或 error_handler
 def route_after_phase2_summary(state):
-    if state["phase_status"].get("phase2") == "error":
+    # 只有 run_sta error 是阻断级（Phase3 FixEco 依赖 STA session）
+    # PV/Signoff error 是警告级，不阻断，直接进 Phase3
+    if state["step_status"].get("run_sta") == "error":
         return "error_handler"
     s = state["user_fix_strategy"]
     if s == "setup": return "run_fix_setup"
@@ -1640,7 +1642,7 @@ def mock_run_sta(design_name: str, run_dir: str) -> dict:
 | L2-07 | route_after_phase1 | `step_status["run_eco_route"]="done"` | `"run_ext"` |
 | L2-08 | route_after_run_ext | `step_status["run_ext"]="done"` | `[Send("run_sta", state), Send("run_pv", state), Send("run_signoff", state)]`（三个 Send 对象） |
 | L2-09 | route_after_run_ext | `step_status["run_ext"]="error"` | `"error_handler"` |
-| L2-10 | route_after_phase2_summary | `phase_status["phase2"]="error"` | `"error_handler"` |
+| L2-10 | route_after_phase2_summary | `step_status["run_sta"]="error"` | `"error_handler"` |
 | L2-11 | route_after_phase2_summary | `user_fix_strategy="setup"` | `"run_fix_setup"` |
 | L2-12 | route_after_phase2_summary | `user_fix_strategy="hold"` | `"run_fix_hold"` |
 | L2-13 | route_after_phase2_summary | `user_fix_strategy="invalid_strategy"` | `"error_handler"` |
@@ -1786,7 +1788,7 @@ def test_interrupt_position_in_phase2_summary():
 |---|---|---|---|---|
 | L5-01 | run_eco_route 异常 → 路由 Error Handler | mock run_eco_route 抛 `Exception("license expired")` | graph.stream() | State: `step_status["run_eco_route"]="error"`, `phase_status["phase1"]="error"`, `error_msg="[run_eco_route] license expired"`, `current_step="run_eco_route"`, `current_phase="phase1"`；节点序列包含 `error_handler` |
 | L5-02 | run_sta 异常（Phase2 并行中）→ 路由 Error Handler | mock run_sta 抛异常，run_pv 和 run_signoff 正常 | graph.stream() | 三个并行节点中 run_sta 标记 error，run_pv/run_signoff 标记 done → phase2_summary 检测到 error → error_handler；State 中 `phase_status["phase2"]="error"` |
-| L5-03 | Error Handler retry：update_state 重置 + goto | 在 L5-01 基础上 | 1. `graph.update_state(config, {"step_status": {"run_eco_route": "pending"}, "phase_status": {"phase1": "pending"}, "error_msg": ""})` 2. `graph.stream(Command(goto="run_eco_route"), config)` | run_eco_route 重新执行（从 pending → running → done/error），不重跑 Init |
+| L5-03 | Error Handler retry：update_state 重置 + goto | 在 L5-01 基础上 | 1. `graph.update_state(config, {"step_status": {"run_eco_route": "pending"}, "error_msg": ""})` 2. `graph.stream(Command(goto="run_eco_route"), config)` | run_eco_route 重新执行（从 pending → running → done/error），不重跑 Init |
 | L5-04 | Error Handler abort → finalize → END | 在 L5-01 基础上 | `graph.stream(Command(goto="finalize"), config)` | 直接跳到 finalize，phase_status 保持 error 但不再重试 |
 | L5-05 | run_fix_setup 异常 → Error Handler → retry Phase3 | mock run_fix_setup 抛异常 | 跑到 Phase3 run_fix_setup → 异常 → Error Handler → retry → 只重跑 run_fix_setup 这一个 Step | Command goto `run_fix_setup` |
 | L5-06 | phase2_summary 检测到并行节点部分 error 时不中断 | L2-17 的场景 | 跑到 phase2_summary | **不**触发 interrupt()，直接 return State 让条件边路由 error_handler。这保证了 Phase2 有失败时不会弹出"请选择修复策略"，避免用户在已损坏的数据上做决策 |
@@ -1827,7 +1829,7 @@ def test_phase2_summary_interrupt_rerun_safety():
 |---|---|---|---|---|
 | L6-01 | interrupt rerun：prev_* 字段二次写入不变 | interrupt() 在 phase2_summary 末端 → rerun 时 prev_setup_vio 的值已正确 | phase2_summary 恢复后再触发 rerun | prev_setup_vio / prev_hold_vio 值不变 |
 | L6-02 | interrupt rerun：_run_step 前半段幂等 | Step 节点无 interrupt，本身不 rerun。但如果将来加了，MCP 调用要安全 | （架构保证：interrupt 只在汇总节点，Step 节点无 interrupt，不 rerun） | _run_step 天然幂等：running→done 覆盖、异常标记覆盖写 |
-| L6-03 | retry 重跑同一 Step：State 一致 | Error Handler retry 让出错 Step 重跑，验证第二次跑的 State 与第一次（无 retry）一致 | 构造 Phase2 retry 场景 → 重跑后比较 State 与首次无异常执行的 State | 两个 State 除了 step_status 的时间戳（如有）外完全一致 |
+| L6-03 | retry 重跑同一 Step：State 一致 | Error Handler retry 让单个出错 Step 重跑（其他已完成 Step 不重跑），验证第二次跑的 State 与第一次（无 retry）一致 | 构造 Phase2 retry 场景 → 重跑后比较 State 与首次无异常执行的 State | 两个 State 除了 step_status 的时间戳（如有）外完全一致 |
 | L6-04 | 日志覆盖写幂等 | 同一 run_dir 下两次跑 run_sta | 第一次跑完 → 手动触发第二次 | STA 输出文件（从 Config.path_templates.run_sta_report 拼接）指向同一文件，文件内容是第二次的（覆盖），不是两次拼接 |
 
 **幂等性断言模板**：每当有 Command goto 或 interrupt resume 的动作后，都应该验证"恢复后执行结果与无中断正常执行的结果一致"。如果不一致 → interrupt() 位置放错 或 State 更新逻辑有副作用。
