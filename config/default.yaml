@@ -1,0 +1,32 @@
+# ECO Agent 主配置文件
+# 可通过 main.py 启动时指定 --config <path> 覆盖默认路径
+
+eco_agent:
+  default_scenario: "happy_path"
+  default_thread_id: "demo_session"
+
+checkpoint:
+  # "memory" 或 "sqlite"
+  backend: "sqlite"
+  # sqlite 时生效
+  db_path: "runs/checkpoints.sqlite"
+  # sqlite 模式下是否建新连接（进程间 checkpoint 续跑需要）
+  check_same_thread: false
+
+mock_server:
+  simulate_delay: 0.3
+  # true 时每次 step 都写 .log/.rpt 到 run_dir
+  write_logs: true
+
+init_validation:
+  require_design_dir: false
+  require_netlist: false
+  require_sdc: false
+  required_env_vars: []
+  required_tools: []
+
+finalize:
+  write_json_report: true
+  write_finished_marker: true
+  log_glob: "*.log"
+  rpt_glob: "*.rpt"

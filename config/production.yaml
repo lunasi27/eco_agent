@@ -1,0 +1,32 @@
+# ECO Agent 生产/真实 EDA 模式配置
+# 启用严格的 Init 校验：必须有设计目录、网表文件、license 环境变量
+# 使用 SqliteSaver 持久化 checkpoint 以支持进程间恢复
+# 注意：使用真实 EDA 时需要把 mock_server 换成 RealECOMCPServer
+
+eco_agent:
+  default_scenario: "happy_path"
+  default_thread_id: "production_session"
+
+checkpoint:
+  backend: "sqlite"
+  db_path: "runs/production_checkpoints.sqlite"
+  check_same_thread: false
+
+mock_server:
+  simulate_delay: 0.0
+  write_logs: false
+
+init_validation:
+  require_design_dir: true
+  require_netlist: true
+  require_sdc: false
+  required_env_vars:
+    - "EDA_LICENSE_FILE"
+    - "LM_LICENSE_FILE"
+  required_tools: []
+
+finalize:
+  write_json_report: true
+  write_finished_marker: true
+  log_glob: "*.log"
+  rpt_glob: "*.rpt"
