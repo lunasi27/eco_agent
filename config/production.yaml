@@ -6,6 +6,7 @@
 eco_agent:
   default_scenario: "happy_path"
   default_thread_id: "production_session"
+  default_design_name: "production_design"
 
 llm:
   enabled: false

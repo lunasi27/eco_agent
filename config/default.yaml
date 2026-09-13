@@ -4,6 +4,7 @@
 eco_agent:
   default_scenario: "happy_path"
   default_thread_id: "demo_session"
+  default_design_name: "demo_design"
 
 llm:
   enabled: false

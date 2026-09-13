@@ -5,6 +5,7 @@ from typing import Literal
 from langgraph.types import Send
 
 from src.state import ECOState
+from src.utils.constants import PHASE_STEPS
 
 
 def route_after_init(state: ECOState) -> Literal["error_handler", "run_eco_route"]:
@@ -28,15 +29,24 @@ _PHASE2_SHARED_KEYS = (
 )
 
 
+def make_route_after_run_ext(p2_steps: tuple[str, ...]):
+    """
+    构图时由 build_graph 调用，闭包捕获 p2_steps。
+    运行时根据闭包里固定的 step 列表生成 Send 并行派发。
+    """
+
+    def route(state: ECOState):
+        if state.get("step_status", {}).get("run_ext") == "error":
+            return "error_handler"
+        shared = {k: state[k] for k in _PHASE2_SHARED_KEYS if k in state}
+        return [Send(name, shared) for name in p2_steps]
+
+    return route
+
+
 def route_after_run_ext(state: ECOState):
-    if state.get("step_status", {}).get("run_ext") == "error":
-        return "error_handler"
-    shared = {k: state[k] for k in _PHASE2_SHARED_KEYS if k in state}
-    return [
-        Send("run_sta", shared),
-        Send("run_pv", shared),
-        Send("run_signoff", shared),
-    ]
+    """向后兼容：硬编码默认 Phase2 step 列表。"""
+    return make_route_after_run_ext(PHASE_STEPS["phase2"])(state)
 
 
 def route_after_phase2_gate(
@@ -47,22 +57,42 @@ def route_after_phase2_gate(
     return "phase2_summary"
 
 
+def make_route_after_phase2_summary(
+    p2_steps: tuple[str, ...],
+    p3_steps: tuple[str, ...],
+):
+    """
+    构图时由 build_graph 调用，闭包捕获 p2_steps 和 p3_steps。
+    检查 Phase2 哪些 step 有 error → 路由到 error_handler。
+    否则根据 user_fix_strategy 路由到对应的 Phase3 fix step。
+    只在 p3_router == "user_choice" 时注册这个条件边。
+    """
+    valid_fix_steps = {
+        f"run_fix_{s.replace('run_fix_', '')}" for s in p3_steps
+    }
+
+    def route(state: ECOState):
+        step_status = state.get("step_status", {})
+        for step in p2_steps:
+            if step_status.get(step) == "error":
+                return "error_handler"
+
+        strategy = state.get("user_fix_strategy", "")
+        target = f"run_fix_{strategy}" if strategy else ""
+        if target in valid_fix_steps:
+            return target
+        return "error_handler"
+
+    return route
+
+
 def route_after_phase2_summary(
     state: ECOState,
 ) -> Literal["error_handler", "run_fix_setup", "run_fix_hold", "run_fix_leakage"]:
-    step_status = state.get("step_status", {})
-    for step in ("run_sta", "run_pv", "run_signoff"):
-        if step_status.get(step) == "error":
-            return "error_handler"
-
-    strategy = state.get("user_fix_strategy", "")
-    if strategy == "setup":
-        return "run_fix_setup"
-    if strategy == "hold":
-        return "run_fix_hold"
-    if strategy == "leakage":
-        return "run_fix_leakage"
-    return "error_handler"
+    """向后兼容：硬编码默认 Phase2 + Phase3 step 列表。"""
+    return make_route_after_phase2_summary(
+        PHASE_STEPS["phase2"], PHASE_STEPS["phase3"]
+    )(state)
 
 
 def route_after_phase3_gate(
@@ -80,6 +110,3 @@ def route_after_phase3_summary(
     if choice == "continue":
         return "init"
     return "finalize"
-
-
-
