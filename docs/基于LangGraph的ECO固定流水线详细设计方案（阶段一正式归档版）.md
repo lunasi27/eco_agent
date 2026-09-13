@@ -691,6 +691,12 @@ LangGraph 的官方行为：**当节点内调用 `interrupt()` 后，恢复执�
                               └──────┬───────┘
                                      ▼
                               ┌──────────────┐
+                              │ agent_entry   │  ★ 正式入口
+                              │ LLM/规则      │
+                              │ 意图识别      │
+                              └──────┬───────┘
+                                     ▼
+                              ┌──────────────┐
                               │ Init 初始化   │
                               │ 参数解析+     │
                               │ 目录创建+     │
@@ -704,22 +710,20 @@ LangGraph 的官方行为：**当节点内调用 `interrupt()` 后，恢复执�
   │  │ run_eco_route │──────────────────────────────┐       │
   │  └──────┬───────┘                               │       │
   │         │ error                                  ▼       │
-  │         │      ┌──────────┐            ┌──────────────┐  │
-  │         └─────▶│Error     │            │ run_ext       │  │
-  │                │Handler   │            └──────┬───────┘  │
-  │                └────┬─────┘                   │         │
-  │                     │                          │ error    │
-  │              ┌──────┴─────┐          ┌────────┴────────┐ │
-  │              │retry:goto  │          │                 │ │
-  │              │出错Step    │          ▼                 ▼ │
-  │              └───────────┘    ┌──────────┐    ┌──────────┐│
-  │                                │Error     │    │Send并行  ││
-  │                                │Handler   │    │Phase2   ││
-  │                                └──────────┘    └────┬─────┘│
-  │                                                     │      │
-  └─────────────────────────────────────────────────────┼──────┘
-                                                        │
-                                    Send 同时发三个节点 │
+  │         │                              ┌──────────────┐  │
+  │         └─────────────────────────────▶│ run_ext       │  │
+  │                                        └──────┬───────┘  │
+  │                                               │         │
+  │                                        ┌──────┴─────┐   │
+  │                                        │ error       │   │
+  │                                        ▼             ▼   │
+  │                                 ┌──────────┐  ┌──────────┐│
+  │                                 │Send并行  │  │Error     ││
+  │                                 │Phase2   │  │Handler   ││
+  │                                 └────┬─────┘  └──────────┘│
+  └─────────────────────────────────────┼────────────────────┘
+                                        │
+                                    Send 同时发三个节点
                                      ┌──────────────────┼──────────────────┐
                                      ▼                  ▼                  ▼
                               ┌────────────┐    ┌────────────┐    ┌──────────────┐
@@ -729,21 +733,28 @@ LangGraph 的官方行为：**当节点内调用 `interrupt()` 后，恢复执�
                                     │                 │                  │
                                     └────────┬────────┴────────┬─────────┘
                                              │                 │
-                              三个全部 done ──┘                 │
                                              ▼                 │
-                                    ┌─────────────────┐        │
-                                    │ phase2_summary  │        │
-                                    │ 汇总并行结果     │        │
-                                    │ 正常 → interrupt │        │
-                                    │ 异常 → Error    │        │
-                                    │        Handler  │        │
-                                    └────────┬────────┘        │
+                                    ┌─────────────────┐       │
+                                    │ ★ phase2_gate   │       │
+                                    │ 汇聚并行结果      │       │
+                                    │ any_error? →     │       │
+                                    │   ┌─ yes →       │       │
+                                    │   │  error_handler│      │
+                                    │   └─ no (all done)│      │
+                                    └────────┬────────┘       │
                                              │                 │
                                              ▼                 │
-                                    ┌─────────────────┐        │
-                                    │ 中断1：等待      │        │
-                                    │ 修复策略输入     │        │
-                                    └────────┬────────┘        │
+                                    ┌─────────────────┐       │
+                                    │ phase2_summary  │       │
+                                    │ 汇总并行结果     │       │
+                                    │ → interrupt     │       │
+                                    └────────┬────────┘       │
+                                             │                 │
+                                             ▼                 │
+                                    ┌─────────────────┐       │
+                                    │ 中断1：等待      │       │
+                                    │ 修复策略输入     │       │
+                                    └────────┬────────┘       │
                                              │ user_fix_strategy │
                                              ▼                 │
                               ┌──────────────┼──────────────┐ │
@@ -754,26 +765,50 @@ LangGraph 的官方行为：**当节点内调用 `interrupt()` 后，恢复执�
                             └────────┬─────┴────────┬──────┘
                                      │              │
                                      ▼              ▼
-                              ┌─────────────────┐
-                              │ phase3_summary  │
-                              │ 汇总修复结果     │
-                              │ → interrupt     │
-                              └────────┬────────┘
-                                       ▼
-                              ┌─────────────────┐
-                              │ 中断2：迭代决策   │
-                              │ continue / stop │
-                              └──┬──────────┬───┘
-                       continue │          │ stop
-                                ▼          ▼
-                         ┌──────────┐ ┌───────────┐
-                         │回到Init  │ │ Finalize  │
-                         │新一轮迭代 │ │ 收尾       │
-                         └──────────┘ └─────┬─────┘
-                                            ▼
-                                         ┌──────┐
-                                         │ END  │
-                                         └──────┘
+                                    ┌─────────────────┐
+                                    │ ★ phase3_gate   │
+                                    │ 汇聚修复结果      │
+                                    │ any_error? →     │
+                                    │   ┌─ yes →       │
+                                    │   │  error_handler│
+                                    │   └─ no (all done)│
+                                    └────────┬────────┘
+                                             ▼
+                                    ┌─────────────────┐
+                                    │ phase3_summary  │
+                                    │ 汇总修复结果     │
+                                    │ → interrupt     │
+                                    └────────┬────────┘
+                                             ▼
+                                    ┌─────────────────┐
+                                    │ 中断2：迭代决策   │
+                                    │ continue / stop │
+                                    └──┬──────────┬───┘
+                             continue │          │ stop
+                                      ▼          ▼
+                               ┌──────────┐ ┌───────────┐
+                               │回到Init  │ │ Finalize  │
+                               │新一轮迭代 │ │ 收尾       │
+                               └──────────┘ └─────┬─────┘
+                                                  ▼
+                                               ┌──────┐
+                                               │ END  │
+                                               └──────┘
+
+  ★ Error Handler（任意 Step error 都进，节点内部 Command(goto) 自行路由）：
+
+     run_step error → Gate 检测到 phase_status.error → route_after_gate → error_handler
+              │
+              ▼
+     ┌──────────────┐         retry          ┌──────────────┐
+     │ error_handler │──────────────────────▶│ Command(goto  │
+     │ interrupt     │  或 abort              │  =出错节点,  │
+     │ (retry/abort) │──────────────────────▶│  update=reset)│
+     └──────────────┘                        └──────────────┘
+                                                   │
+                                                   ▼
+                                            直接跳到目标节点
+                                            （绕开 checkpoint metadata 残留）
 ```
 
 #### 图入口说明
@@ -794,141 +829,313 @@ LangGraph 的官方行为：**当节点内调用 `interrupt()` 后，恢复执�
 
 ### 5.3 完整 LangGraph 代码骨架
 
-以下是 Phase 节点 + 条件边的完整骨架，对应 5.2 链路图：
+以下是 Phase 节点 + 条件边的完整骨架，对应 5.2 链路图。
+
+> ⚠️ **与原设计的架构差异**（开发过程中迭代引入，详见本文档末尾"架构演进"章节）：
+> - State 从 18 字段扩展到 23 字段 + Annotated reducers
+> - agent_entry 为正式入口（意图识别从 Init 中分离）
+> - Phase2/Phase3 之间加入 Gate 汇聚节点（解决 Send 并行 race）
+> - Error Handler 路由下沉到节点内部（Command(goto)，不注册条件边）
+> - Phase2 并行错误：任意 Step error 都阻断（方案 A，无警告级）
+> - Send 并行用共享字段白名单
 
 ```python
 from langgraph.graph import StateGraph, Send, END
 from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.types import interrupt
-import mcp_server  # 你的MCP Server客户端
+from langgraph.types import Command, interrupt
+from typing import TypedDict, Annotated
+from operator import add
+import sqlite3
 
-# ============ 1. State ============
-class ECOState(TypedDict):
+# ============ 1. State（23 字段 + 2 种 Reducer）============
+
+def _last_writer_reducer(existing, updates):
+    return updates
+
+def _dict_merge_reducer(existing, updates):
+    return {**existing, **updates}
+
+class ECOState(TypedDict, total=False):
+    # === 基础参数 ===
     design_name: str
+    design_dir: str                      # ★ 架构扩展（Init 校验用）
     run_dir: str
     iteration_cnt: int
+
+    # === Phase1/2 Step 结果 ===
     setup_vio: int
     hold_vio: int
     pv_pass: bool
     signoff_pass: bool
+
+    # === 中断相关 ===
     interrupt_msg: str
     user_fix_strategy: str
     user_iter_choice: str
-    phase_status: dict
-    step_status: dict
+    user_error_choice: str               # ★ error_handler 架构扩展
+    retry_step: str                      # ★ error_handler 架构扩展
+
+    # === 状态跟踪 ===
+    phase_status: Annotated[dict[str, str], _dict_merge_reducer]
+    step_status: Annotated[dict[str, str], _dict_merge_reducer]
+    step_elapsed: Annotated[dict[str, float], _dict_merge_reducer]  # ★ step_runner 耗时
     current_phase: str
     current_step: str
     error_msg: str
+
+    # === 收敛对比 ===
     prev_setup_vio: int
     prev_hold_vio: int
-    messages: Annotated[list[BaseMessage], add_messages]
+    iteration_history: Annotated[list[dict], _dict_merge_reducer]    # ★ phase3_summary 迭代历史
 
-# ============ 2. 辅助函数 ============
-def _run_step(state, step_name, phase_name, result_keys=None, extra_params=None):
-    # (同 4.5 节，略)
-    ...
+    # === 对话历史 ===
+    messages: Annotated[list, add_messages]
 
-# ============ 3. 节点注册 ============
-builder = StateGraph(ECOState)
 
-# Init
-builder.add_node("init", node_init)
+# ============ 2. 共享常量 ============
 
-# Phase1 串行 Step
-builder.add_node("run_eco_route", lambda s: _run_step(s, "run_eco_route", "phase1"))
-builder.add_node("run_ext", lambda s: _run_step(s, "run_ext", "phase1"))
+_PHASE2_SHARED_KEYS = (
+    "design_name", "design_dir", "run_dir",
+    "iteration_cnt", "prev_setup_vio", "prev_hold_vio",
+    "iteration_history", "step_elapsed",
+)
 
-# Phase2 并行 Step + 汇总
-builder.add_node("run_sta", lambda s: _run_step(s, "run_sta", "phase2",
-                     result_keys=["setup_vio", "hold_vio"]))
-builder.add_node("run_pv", lambda s: _run_step(s, "run_pv", "phase2",
-                     result_keys=["pv_pass"]))
-builder.add_node("run_signoff", lambda s: _run_step(s, "run_signoff", "phase2",
-                     result_keys=["signoff_pass"]))
-builder.add_node("phase2_summary", node_phase2_summary)
+VALID_STEP_TARGETS = {
+    "run_eco_route", "run_ext",
+    "run_sta", "run_pv", "run_signoff",
+    "run_fix_setup", "run_fix_hold", "run_fix_leakage",
+}
 
-# Phase3 分支 Step + 汇总
-builder.add_node("run_fix_setup", lambda s: _run_step(s, "run_fix_setup", "phase3",
-                     result_keys=["setup_vio"],
-                     extra_params={"fix_strategy": s["user_fix_strategy"]}))
-builder.add_node("run_fix_hold", lambda s: _run_step(s, "run_fix_hold", "phase3",
-                     result_keys=["hold_vio"],
-                     extra_params={"fix_strategy": s["user_fix_strategy"]}))
-# builder.add_node("run_fix_leakage", ...)  # 后续按需加，同样模式
-builder.add_node("phase3_summary", node_phase3_summary)
 
-# 通用节点
-builder.add_node("error_handler", node_error_handler)
-builder.add_node("finalize", node_finalize)
+# ============ 3. 辅助函数 ============
 
-# ============ 4. 流转拓扑 ============
+def run_step(state, step_name, phase_name, mcp_server,
+             result_keys=None, extra_params=None):
+    """统一 Step 执行 + State 更新（异常标记 error）"""
+    import time
+    start = time.time()
+    step_status = dict(state.get("step_status", {}))
+    try:
+        params = extra_params or {}
+        result = mcp_server.run_step(step_name, phase_name, params)
+        step_status[step_name] = "done"
+    except Exception as e:
+        step_status[step_name] = "error"
+        phase_status = dict(state.get("phase_status", {}))
+        phase_status[phase_name] = "error"
+        elapsed = time.time() - start
+        return {
+            "step_status": step_status,
+            "phase_status": phase_status,
+            "error_msg": f"{step_name}: {e}",
+            "step_elapsed": {step_name: elapsed},
+        }
+    elapsed = time.time() - start
+    update = {"step_status": step_status,
+              "step_elapsed": {step_name: elapsed},
+              "current_step": step_name}
+    if result_keys:
+        for k in result_keys:
+            if k in result:
+                update[k] = result[k]
+    return update
 
-# 入口 + Phase1 串行
-builder.set_entry_point("init")
 
-# Init → run_eco_route（校验通过）或 error_handler（校验失败）
+# ============ 4. 工厂函数 ============
+
+def make_step_node(mcp_server, step_name, phase_name, result_keys=None):
+    def node(state):
+        return run_step(state, step_name, phase_name, mcp_server,
+                        result_keys=result_keys)
+    return node
+
+
+# ============ 5. 路由函数（纯函数，只读 State）============
+
+def route_after_agent_entry(state):
+    # agent_entry 内部已做意图分流，chat_fallback 直接走 END
+    return "init"
+
 def route_after_init(state):
-    if state["step_status"].get("init") == "error":
+    if state.get("step_status", {}).get("init") == "error":
         return "error_handler"
     return "run_eco_route"
-builder.add_conditional_edges("init", route_after_init)
 
-# run_eco_route → run_ext（正常）或 error_handler（异常）
-builder.add_conditional_edges("run_eco_route",
-    lambda s: "error_handler" if s["step_status"].get("run_eco_route") == "error" else "run_ext")
-
-# run_ext → Phase2 并行（Send API）或 error_handler
 def route_after_run_ext(state):
-    if state["step_status"].get("run_ext") == "error":
+    if state.get("step_status", {}).get("run_ext") == "error":
         return "error_handler"
-    return [Send("run_sta", state), Send("run_pv", state), Send("run_signoff", state)]
-builder.add_conditional_edges("run_ext", route_after_run_ext)
+    # ★ Send 共享字段白名单，避免并行节点互相覆盖
+    shared = {k: state[k] for k in _PHASE2_SHARED_KEYS if k in state}
+    return [Send("run_sta", shared),
+            Send("run_pv", shared),
+            Send("run_signoff", shared)]
 
-# Phase2 三个并行节点 → phase2_summary（全部完成后自动聚合）
-builder.add_edge("run_sta", "phase2_summary")
-builder.add_edge("run_pv", "phase2_summary")
-builder.add_edge("run_signoff", "phase2_summary")
+def route_after_phase2_gate(state):
+    """★ Gate 汇聚后的单一条件路由"""
+    ps = state.get("phase_status", {})
+    if ps.get("phase2") == "error":
+        return "error_handler"
+    return "phase2_summary"
 
-# phase2_summary → Phase3 分支（根据 user_fix_strategy）或 error_handler
 def route_after_phase2_summary(state):
-    # 只有 run_sta error 是阻断级（Phase3 FixEco 依赖 STA session）
-    # PV/Signoff error 是警告级，不阻断，直接进 Phase3
-    if state["step_status"].get("run_sta") == "error":
-        return "error_handler"
-    s = state["user_fix_strategy"]
+    s = state.get("user_fix_strategy", "")
     if s == "setup": return "run_fix_setup"
     if s == "hold": return "run_fix_hold"
-    # if s == "leakage": return "run_fix_leakage"  # 后续按需加
-    return "error_handler"  # strategy 非法时走 Error Handler
-builder.add_conditional_edges("phase2_summary", route_after_phase2_summary)
+    if s == "leakage": return "run_fix_leakage"
+    return "error_handler"
 
-# Phase3 分支 → phase3_summary
-builder.add_edge("run_fix_setup", "phase3_summary")
-builder.add_edge("run_fix_hold", "phase3_summary")
-# builder.add_edge("run_fix_leakage", "phase3_summary")  # 后续按需加
+def route_after_phase3_gate(state):
+    """★ Gate 汇聚后的单一条件路由"""
+    ps = state.get("phase_status", {})
+    if ps.get("phase3") == "error":
+        return "error_handler"
+    return "phase3_summary"
 
-# phase3_summary → continue 回 init / stop → finalize
 def route_after_phase3_summary(state):
-    if state["user_iter_choice"] == "continue":
+    if state.get("user_iter_choice") == "continue":
         return "init"
     return "finalize"
-builder.add_conditional_edges("phase3_summary", route_after_phase3_summary)
 
-# Error Handler → retry 回出错 Step / abort → finalize
-# 调用层在 Command(goto=出错Step) 之前用 update_state 重置状态
-# 这里不需要加条件边，由调用层的 Command 显式指定 goto
-builder.add_edge("finalize", END)
 
-# ============ 5. 编译 + Checkpointer ============
+# ============ 6. Gate 汇聚节点 ============
+
+def _phase_gate(state, phase_name, expected_steps):
+    step_status = state.get("step_status", {})
+    any_error = any(step_status.get(s) == "error" for s in expected_steps)
+    all_done = all(step_status.get(s) == "done" for s in expected_steps)
+    ps = dict(state.get("phase_status", {}))
+    if any_error:
+        ps[phase_name] = "error"
+    elif all_done:
+        ps[phase_name] = "done"
+    else:
+        ps[phase_name] = "running"
+    return {"phase_status": ps, "current_phase": phase_name}
+
+def node_phase2_gate(state):
+    return _phase_gate(state, "phase2", ("run_sta", "run_pv", "run_signoff"))
+
+def node_phase3_gate(state):
+    return _phase_gate(state, "phase3", ("run_fix_setup", "run_fix_hold", "run_fix_leakage"))
+
+
+# ============ 7. Error Handler（★ 路由下沉到节点内部）============
+
+def _reset_error_state(state, error_step, error_phase):
+    ss = {k: v for k, v in state.get("step_status", {}).items()
+          if k != error_step}
+    ps = {k: v for k, v in state.get("phase_status", {}).items()
+          if k != error_phase}
+    return {
+        "step_status": ss,
+        "phase_status": ps,
+        "error_msg": "",
+        "current_phase": error_phase,
+        "current_step": "",
+    }
+
+def make_error_handler_node():
+    def node_error_handler(state: ECOState) -> Command:
+        # 定位出错 Step 和 Phase
+        ss = state.get("step_status", {})
+        ps = state.get("phase_status", {})
+        error_step = next((k for k, v in ss.items() if v == "error"), None)
+        error_phase = next((k for k, v in ps.items() if v == "error"), None)
+
+        interrupt_msg = f"❌ Error in {error_phase}/{error_step}\n"
+        interrupt_msg += f"error_msg: {state.get('error_msg', '')}\n"
+        interrupt_msg += "Retry (r) or Abort (a)? [r/a]: "
+
+        choice = interrupt(interrupt_msg)
+        choice_lower = choice.strip().lower()
+
+        reset = _reset_error_state(state, error_step, error_phase or "")
+
+        if choice_lower in ("retry", "r", "重试"):
+            target = error_step if error_step in VALID_STEP_TARGETS else "run_eco_route"
+            reset["user_error_choice"] = "retry"
+            reset["retry_step"] = error_step or ""
+            return Command(goto=target, update=reset)
+        else:
+            reset["user_error_choice"] = "abort"
+            return Command(goto="finalize", update=reset)
+    return node_error_handler
+
+
+# ============ 8. 图编排 ============
+
+def build_graph(mcp_server, checkpointer) -> CompiledStateGraph:
+    builder = StateGraph(ECOState)
+
+    # 8.1 节点注册
+    builder.add_node("agent_entry", make_agent_entry_node())
+    builder.add_node("init", make_init_node())
+    builder.add_node("run_eco_route", make_step_node(mcp_server, "run_eco_route", "phase1"))
+    builder.add_node("run_ext", make_step_node(mcp_server, "run_ext", "phase1"))
+    builder.add_node("run_sta", make_step_node(mcp_server, "run_sta", "phase2",
+                     result_keys=["setup_vio", "hold_vio"]))
+    builder.add_node("run_pv", make_step_node(mcp_server, "run_pv", "phase2",
+                     result_keys=["pv_pass"]))
+    builder.add_node("run_signoff", make_step_node(mcp_server, "run_signoff", "phase2",
+                     result_keys=["signoff_pass"]))
+    builder.add_node("phase2_gate", node_phase2_gate)              # ★
+    builder.add_node("phase2_summary", make_phase2_summary_node())
+    builder.add_node("run_fix_setup", make_step_node(mcp_server, "run_fix_setup", "phase3",
+                     result_keys=["setup_vio"]))
+    builder.add_node("run_fix_hold", make_step_node(mcp_server, "run_fix_hold", "phase3",
+                     result_keys=["hold_vio"]))
+    builder.add_node("run_fix_leakage", make_step_node(mcp_server, "run_fix_leakage", "phase3"))
+    builder.add_node("phase3_gate", node_phase3_gate)              # ★
+    builder.add_node("phase3_summary", make_phase3_summary_node())
+    builder.add_node("error_handler", make_error_handler_node())    # ★ 内部 Command(goto)
+    builder.add_node("finalize", make_finalize_node())
+
+    # 8.2 入口
+    builder.set_entry_point("agent_entry")
+
+    # 8.3 边和条件边
+    builder.add_conditional_edges("agent_entry", route_after_agent_entry)
+    builder.add_conditional_edges("init", route_after_init)
+    builder.add_edge("run_eco_route", "run_ext")
+    builder.add_conditional_edges("run_ext", route_after_run_ext)   # Send 并行
+
+    # Phase2：三个并行 Step → phase2_gate → 单一条件路由
+    builder.add_edge("run_sta", "phase2_gate")                      # ★
+    builder.add_edge("run_pv", "phase2_gate")                       # ★
+    builder.add_edge("run_signoff", "phase2_gate")                  # ★
+    builder.add_conditional_edges("phase2_gate", route_after_phase2_gate)  # ★
+
+    # phase2_summary → Phase3 互斥分支
+    builder.add_conditional_edges("phase2_summary", route_after_phase2_summary)
+
+    # Phase3：三条都注册（LangGraph 要求所有可达路径），运行时只走一条
+    builder.add_edge("run_fix_setup", "phase3_gate")                # ★
+    builder.add_edge("run_fix_hold", "phase3_gate")                 # ★
+    builder.add_edge("run_fix_leakage", "phase3_gate")              # ★
+    builder.add_conditional_edges("phase3_gate", route_after_phase3_gate)  # ★
+
+    # phase3_summary → 迭代循环 或 finalize
+    builder.add_conditional_edges("phase3_summary", route_after_phase3_summary)
+
+    builder.add_edge("finalize", END)
+    # ★ error_handler 不加条件边！节点内部返回 Command(goto=target, update=reset)
+
+    return builder.compile(checkpointer=checkpointer)
+
+
+# ============ 9. 编译 + Checkpointer ============
+
 checkpointer = SqliteSaver(sqlite3.connect("eco_checkpoints.db"))
-graph = builder.compile(checkpointer=checkpointer)
+graph = build_graph(MockECOMCPServer("happy_path"), checkpointer)
 ```
 
 ---
 
 ### 5.4 基础流转链路（文本简版）
 
-**agent分流 → Init → run_eco_route → run_ext → Send并行(run_sta‖run_pv‖run_signoff) → phase2_summary → 中断1(等修复策略) → run_fix_setup或run_fix_hold → phase3_summary → 中断2(迭代决策) → Init(新轮) 或 Finalize → END**
+**agent_entry(意图识别) → Init(校验) → run_eco_route → run_ext → Send并行(run_sta‖run_pv‖run_signoff) → phase2_gate(汇聚) → phase2_summary → 中断1(等修复策略) → run_fix_setup或run_fix_hold或run_fix_leakage → phase3_gate(汇聚) → phase3_summary → 中断2(迭代决策) → Init(新轮) 或 Finalize → END**
+
+**Error Handler 分支**：任意 Step error → Gate 检测到 → route_after_gate → error_handler.interrupt(retry/abort) → 节点内部 Command(goto=target) 直接路由（绕开 checkpoint metadata 残留）
 
 ### 5.5 三种中断机制（核心特性）
 
@@ -963,97 +1170,62 @@ graph = builder.compile(checkpointer=checkpointer)
 
 ### 6.2 调用层核心代码结构
 
+> ⚠️ **架构优化**：与初始设计相比，调用层极度简化（从 60+ 行缩减到 ~28 行）。
+> 原因：Error Handler 的路由决策（retry → Command(goto=出错节点)、abort → Command(goto=finalize)）**下沉到了节点内部**。
+> 调用层不再区分中断类型，不再做 update_state，不再构建 Command(goto)——**所有中断统一 `Command(resume=user_input)`**。
+
 ```python
-from langgraph.graph import StateGraph
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.types import Command, interrupt
+from langgraph.types import Command
 
-graph = builder.compile(checkpointer=SqliteSaver(...))
-config = {"configurable": {"thread_id": "eco_session_designA_v1"}}
-
-
-def run_graph_with_interrupts(graph, initial_input, config):
-    """外层交互循环：驱动图执行 + 处理所有中断 + 管理断点续跑"""
-    
+def run_event_loop(graph, config, initial_input=None):
+    """统一交互循环：stream → 捕获中断 → input → Command(resume)"""
     current_input = initial_input
-    
+
     while True:
-        print("\n" + "="*50)
         for event in graph.stream(current_input, config):
             print(format_event(event))
-        
+
         state = graph.get_state(config)
         if not state.next:
-            print("\n===== 执行完毕 =====")
             print(format_final_state(state.values))
             return state.values
-        
-        print("\n===== 中断发生 =====")
-        current_state = state.values
-        print(format_interrupt(current_state))
-        
+
+        # 所有中断统一展示 + resume
+        print(format_interrupt(state.values))
         user_input = input("> ").strip()
-        
-        # 根据中断类型构建 Command
-        current_phase = current_state.get("current_phase", "")
-        
-        if current_phase == "error_handler":
-            # Error Handler 中断
-            if user_input.lower() == "retry":
-                                # 直接用当前出错的 Step 名当 goto 目标——只重跑这个 Step，不重跑整个 Phase
-                step_to_retry = current_state.get("current_step", "")
-                # 重置出错 Step 状态为 pending，清除 error_msg
-                graph.update_state(config, {
-                    "step_status": {**current_state.get("step_status", {}), step_to_retry: "pending"},
-                    "error_msg": "",
-                    "current_phase": "",
-                    "current_step": ""
-                })
-                # 跳回出错的那个 Step
-                current_input = Command(goto=step_to_retry)
-            else:
-                current_input = Command(goto="finalize")
-        else:
-            # 中断1（Phase2 修复策略）/ 中断2（迭代决策）→ 正常 resume
-            current_input = Command(resume=user_input)
-
-
-# Phase 首节点映射表（调用层 retry 时用来确定跳回哪个节点）
-step_to_retry = {
-    "phase1": "run_eco_route",
-    "phase2": "run_sta",          # Phase2 并行，三个并行节点任一都可，LangGraph 会自动恢复并行状态
-    "phase3": "run_fix_setup",    # Phase3 分支，根据修复策略选，但跳回首节点即可，Phase3 会再次根据策略路由
-}
-
-
-if __name__ == "__main__":
-    user_msg = input("请输入指令（如 '帮我跑 designA 的 ECO'）：")
-    run_graph_with_interrupts(
-        graph,
-        {"messages": [HumanMessage(content=user_msg)]},
-        config
-    )
+        current_input = Command(resume=user_input)
 ```
 
-### 6.3 三种中断的 Command 构建逻辑
+**为什么这样可行**：`Command(resume="retry")` 发给 error_handler 节点后，节点内部会拿到 interrupt 的返回值 `"retry"`，然后在节点内部分支：
+- retry → `Command(goto=error_step, update=reset)` — LangGraph 直接跳到出错节点
+- abort → `Command(goto="finalize", update=reset)` — LangGraph 直接跳到 finalize
 
-这是调用层**唯一需要写一点业务判断**的地方。不同中断恢复方式不同：
+调用层完全不需要关心这些细节。
 
-| 中断类型 | 判断依据 | 用户输入 | Command 构建 |
+### 6.3 三种中断的恢复方式
+
+| 中断类型 | 触发节点 | 用户输入示例 | 恢复方式 |
 |---|---|---|---|
-| 中断1（Phase2 修复策略） | `current_phase == "phase2"` 且 `phase_status["phase2"] == "running"`（interrupt 在 summary 里，phase 状态还是 running） | setup / hold / leakage | `Command(resume=user_input)` |
-| 中断2（Phase3 迭代决策） | `current_phase == "phase3"` | continue / stop | `Command(resume="continue")` / `Command(resume="stop")` |
-| Error Handler | `current_phase == "error_handler"` | retry / abort | retry: 先 update_state 重置 step_status/phase_status → `Command(goto=step_to_retry[出错Phase])`；abort: `Command(goto="finalize")` |
+| 中断1（Phase2 修复策略） | phase2_summary | `setup` / `hold` / `leakage` | `Command(resume="setup")` → phase2_summary 节点继续执行 → 设 user_fix_strategy → 条件边路由 |
+| 中断2（Phase3 迭代决策） | phase3_summary | `continue` / `stop` | `Command(resume="continue")` → phase3_summary 节点继续执行 → 设 user_iter_choice → 条件边路由 |
+| Error Handler | error_handler | `retry` / `r` / `重试` / `abort` / `a` / `终止` | `Command(resume="retry")` → error_handler 节点**内部**构建 `Command(goto=error_step, update=reset)` 直接跳转到出错节点 |
+
+**关键约束**：调用层**不调用 `graph.update_state()`**，不构建 `Command(goto=...)`，**不依赖任何 State 字段**（不读 current_phase、不读 step_status）。它只和 `graph`（CompiledStateGraph）打交道，调 `stream()` / `get_state()`。
 
 ### 6.4 断点续跑
 
 LangGraph 的 Checkpoint 机制让续跑非常简单——**用同一个 thread_id 调 graph.stream 即可**：
 
 ```python
-# 续跑：不传任何新输入，LangGraph 自动从 Checkpoint 恢复到上次中断位置
-graph.stream(None, config)
+# 进程 A：跑到中断
+g1 = build_graph(checkpointer=SqliteSaver(sqlite3.connect("checkpoints.db")))
+g1.stream(initial_input, {"configurable": {"thread_id": "session_001"}})
+del g1
 
-# 续跑后，照常进入外层循环：get_state → 有中断 → 展示 → input → Command → resume
+# 进程 B：同一 thread_id，直接续跑
+g2 = build_graph(checkpointer=SqliteSaver(sqlite3.connect("checkpoints.db")))
+# Command(resume) 会被 error_handler 节点正确处理
+g2.stream(Command(resume="retry"), {"configurable": {"thread_id": "session_001"}})
 ```
 
 ### 6.5 中断超时处理（原型阶段暂不实现，留设计缺口）

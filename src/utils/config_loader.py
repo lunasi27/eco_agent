@@ -11,6 +11,14 @@ DEFAULTS: dict[str, Any] = {
         "default_scenario": "happy_path",
         "default_thread_id": "demo_session",
     },
+    "llm": {
+        "enabled": False,
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "base_url": None,
+        "api_key_env": "OPENAI_API_KEY",
+        "temperature": 0,
+    },
     "checkpoint": {
         "backend": "memory",
         "db_path": "runs/checkpoints.sqlite",

@@ -5,6 +5,14 @@ eco_agent:
   default_scenario: "happy_path"
   default_thread_id: "demo_session"
 
+llm:
+  enabled: false
+  provider: "openai"
+  model: "gpt-4o-mini"
+  base_url: null
+  api_key_env: "OPENAI_API_KEY"
+  temperature: 0
+
 checkpoint:
   # "memory" 或 "sqlite"
   backend: "sqlite"

@@ -7,6 +7,14 @@ eco_agent:
   default_scenario: "happy_path"
   default_thread_id: "production_session"
 
+llm:
+  enabled: false
+  provider: "openai"
+  model: "gpt-4o"
+  base_url: null
+  api_key_env: "OPENAI_API_KEY"
+  temperature: 0
+
 checkpoint:
   backend: "sqlite"
   db_path: "runs/production_checkpoints.sqlite"

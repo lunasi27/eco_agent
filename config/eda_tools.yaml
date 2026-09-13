@@ -1,0 +1,84 @@
+# config/eda_tools.yaml
+# RealECOMCPServer 配置文件
+# 所有 EDA 工具参数集中在此管理，Python 侧读取后注入环境变量执行 cshell 脚本
+
+common_env:
+  PDK_DIR:    "/opt/pdks/tsmc40lp"
+  EDA_LICENSE: "/opt/licenses"
+  PATH_ADD:   "/opt/innovus/bin:/opt/starrcx/bin:/opt/primetime/bin:/opt/calibre/bin"
+
+steps:
+  run_eco_route:
+    script: "scripts/eda/run_eco_route.csh"
+    env:
+      INNOVUS_BIN: "/opt/innovus/ICC2/bin/innovus"
+      ROUTE_STRATEGY: "timing_driven"
+      NETLIST: "{design_dir}/verilog/{design_name}.v"
+      SDC:       "{design_dir}/constraints/{design_name}.sdc"
+    timeout_s: 3600
+
+  run_ext:
+    script: "scripts/eda/run_ext.csh"
+    env:
+      STARRCX_BIN: "/opt/starrcx/bin/starrcx"
+      EXTRACT_MODE: "rcx"
+      CORNER: "tt"
+    timeout_s: 3600
+
+  run_sta:
+    script: "scripts/eda/run_sta.csh"
+    env:
+      PRIMETIME_BIN: "/opt/primetime/bin/pt"
+      ANALYSIS_MODE: "signoff"
+      CORNER: "tt"
+    timeout_s: 1800
+    parse_patterns:
+      setup_vio: "Setup Violations:\\s*(\\d+)"
+      hold_vio:  "Hold Violations:\\s*(\\d+)"
+
+  run_pv:
+    script: "scripts/eda/run_pv.csh"
+    env:
+      CALIBRE_BIN: "/opt/calibre/bin/calibre"
+      CHECK_TYPE: "lvs+drc"
+      LVS_RULES: "{pdk_dir}/calibre/lvs.rules"
+    timeout_s: 3600
+    parse_patterns:
+      pv_pass: "LVS check.*PASSED"
+
+  run_signoff:
+    script: "scripts/eda/run_signoff.csh"
+    env:
+      CALIBRE_BIN: "/opt/calibre/bin/calibre"
+      SIGNOFF_RULES: "{pdk_dir}/calibre/signoff.rules"
+    timeout_s: 3600
+    parse_patterns:
+      signoff_pass: "Signoff DRC.*PASSED"
+
+  run_fix_setup:
+    script: "scripts/eda/run_fix_setup.csh"
+    env:
+      INNOVUS_BIN: "/opt/innovus/ICC2/bin/innovus"
+      FIX_STRATEGY: "{fix_strategy}"
+      TARGET_MARGIN: "0.05"
+    timeout_s: 1800
+    parse_patterns:
+      setup_vio: "Setup Violations After Fix:\\s*(\\d+)"
+
+  run_fix_hold:
+    script: "scripts/eda/run_fix_hold.csh"
+    env:
+      INNOVUS_BIN: "/opt/innovus/ICC2/bin/innovus"
+      FIX_STRATEGY: "{fix_strategy}"
+      TARGET_MARGIN: "0.03"
+    timeout_s: 1800
+    parse_patterns:
+      hold_vio: "Hold Violations After Fix:\\s*(\\d+)"
+
+  run_fix_leakage:
+    script: "scripts/eda/run_fix_leakage.csh"
+    env:
+      TOOL_BIN: "/opt/fix_leakage/bin/tool"
+    timeout_s: 1800
+    parse_patterns:
+      fix_done: "Leakage Fix.*COMPLETED"
