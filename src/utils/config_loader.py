@@ -139,7 +139,7 @@ def _validate_pipeline(pipeline: dict[str, Any]) -> None:
             )
         if router.startswith("auto_"):
             fix_type = router.replace("auto_", "")
-            required_step = f"run_fix_{fix_type}"
+            required_step = f"run_pt_fix_{fix_type}"
             if required_step not in p3_steps:
                 raise ValueError(
                     f"pipeline.phases.phase3.router='{router}' 需要 step "

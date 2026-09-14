@@ -7,6 +7,7 @@ import pytest
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
+from src.calling_layer.commands import SessionExit
 from src.calling_layer.event_loop import run_event_loop
 from src.graph_builder import build_graph
 from src.mcp_server.mock import MockECOMCPServer
@@ -47,17 +48,39 @@ def test_event_loop_leakage_strategy():
     assert history[0]["fix_strategy"] == "leakage"
 
 
-def test_event_loop_default_initial_input():
-    """initial_input=None → default empty messages"""
+def test_event_loop_fresh_conversation_explicit_messages():
+    """新会话需显式传 {"messages": []}：agent_entry 先 interrupt 打招呼，
+    用户下达 ECO 指令后流水线才开始。"""
     mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
     g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
     cfg = {"configurable": {"thread_id": _fresh_thread_id("el_def")}}
 
-    with patch("builtins.input", side_effect=["setup", "stop"]), \
+    with patch("builtins.input", side_effect=["帮我跑 designA 的 ECO", "setup", "stop"]), \
          patch("builtins.print"):
-        result = run_event_loop(g, cfg)
+        result = run_event_loop(g, cfg, initial_input={"messages": []})
 
     assert result is not None
+    assert result["design_name"] == "designA"
+
+
+def test_event_loop_resume_none_input_continues_checkpoint():
+    """initial_input=None 是 resume 语义：从 checkpoint 断点继续，不能触发 __start__。"""
+    mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
+    g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
+    cfg = {"configurable": {"thread_id": _fresh_thread_id("el_resume")}}
+
+    # 先跑到 phase2_summary 的 interrupt 停下
+    list(g.stream({"design_name": "d"}, cfg))
+    state = g.get_state(cfg)
+    assert state.next  # 确认确实停在中断点
+
+    # resume：继续跑完
+    with patch("builtins.input", side_effect=["setup", "stop"]), \
+         patch("builtins.print"):
+        result = run_event_loop(g, cfg, initial_input=None)
+
+    assert result is not None
+    assert "setup_vio" in result
 
 
 def test_event_loop_graph_finalize_end_state():
@@ -73,3 +96,64 @@ def test_event_loop_graph_finalize_end_state():
     s = g.get_state(cfg)
     assert not s.next
     assert result["setup_vio"] is not None
+
+
+def test_event_loop_exit_command_during_conversation():
+    """对话阶段输入 /exit → 事件循环立即返回，不继续 resume 图"""
+    mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
+    g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+    cfg = {"configurable": {"thread_id": _fresh_thread_id("el_quit")}}
+
+    with patch("builtins.input", side_effect=["/exit"]), \
+         patch("builtins.print"):
+        result = run_event_loop(g, cfg, initial_input={"messages": []})
+
+    # 停在 agent_entry 的 interrupt 上，没有进入流水线
+    assert result.get("design_name", "") == ""
+    s = g.get_state(cfg)
+    assert s.next == ("agent_entry",)
+
+
+def test_event_loop_exit_mid_pipeline_keeps_checkpoint():
+    """流水线中断点 /exit → 抛 SessionExit（断点保留），不能当成正常结束"""
+    mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
+    g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
+    cfg = {"configurable": {"thread_id": _fresh_thread_id("el_mid")}}
+
+    list(g.stream({"design_name": "d"}, cfg))  # 停在 phase2_summary
+    with patch("builtins.input", side_effect=["/exit"]), \
+         patch("builtins.print"):
+        with pytest.raises(SessionExit):
+            run_event_loop(g, cfg, initial_input=None)
+
+    # 断点仍在，可续跑
+    state = g.get_state(cfg)
+    assert state.next, "流水线断点应保留"
+
+
+def test_event_loop_status_command_mid_pipeline():
+    """流水线提示等待答案时输 /status：本地处理后图仍挂起，答案不被吞"""
+    mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
+    g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
+    cfg = {"configurable": {"thread_id": _fresh_thread_id("el_st")}}
+
+    list(g.stream({"design_name": "d"}, cfg))  # 停在 phase2_summary
+    with patch("builtins.input", side_effect=["/status", "setup", "stop"]), \
+         patch("builtins.print"):
+        result = run_event_loop(g, cfg, initial_input=None)
+
+    assert "setup_vio" in result, "/status 后流水线应正常继续跑完"
+
+
+def test_event_loop_run_eco_command_in_conversation():
+    """/run_eco designA → 合成自然语言走意图解析 → 进流水线"""
+    mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
+    g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+    cfg = {"configurable": {"thread_id": _fresh_thread_id("el_runeco")}}
+
+    with patch("builtins.input", side_effect=["/run_eco designA", "setup", "stop"]), \
+         patch("builtins.print"):
+        result = run_event_loop(g, cfg, initial_input={"messages": []})
+
+    assert result["design_name"] == "designA"
+    assert "setup_vio" in result

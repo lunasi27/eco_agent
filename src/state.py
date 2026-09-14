@@ -40,4 +40,5 @@ class ECOState(TypedDict, total=False):
     current_phase: Annotated[str, _last_writer_reducer]
     current_step: Annotated[str, _last_writer_reducer]
     error_msg: Annotated[str, _last_writer_reducer]
+    awaiting_design: Annotated[bool, _last_writer_reducer]
     messages: Annotated[list[BaseMessage], add_messages]

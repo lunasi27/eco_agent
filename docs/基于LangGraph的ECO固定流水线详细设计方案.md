@@ -163,6 +163,108 @@
 
 **本方案选择一张图分流**的理由：原型阶段固定流水线节点数不多（Init + 6 个 Step 节点 + 2 个汇总节点 + Error + Finalize = 11 个），一张图足够清晰。后续如果节点数膨胀到 20+ 或固定流水线逻辑独立成产品，可以平滑重构为嵌套式——内层固定流程图直接编译为一个 Tool 即可，**ECO 固定路径的节点代码一行不动**。
 
+### 2.5 LangGraph 完整拓扑图
+
+下图由 `scripts/draw_graph.py` 从 `graph_builder.py` 构建的 Pregel 对象自动提取节点、静态边和条件分支渲染而成，与运行时实际拓扑**一致**（不是手绘示意图）。
+
+- **绿色节点**：Phase 1/2 普通步骤（EDA 工具原子操作）
+- **粉色节点**：Phase 3 修复步骤（Setup/Hold/Leakage 三类修复策略）
+- **紫色菱形**：Barrier 汇合门（phase2_gate / phase3_gate）——多并行分支全部完成后才放行
+- **橙色矩形**：各 Phase 的 Summary 节点（汇总违例 + 触发 interrupt 等待用户决策）
+- **红色节点**：error_handler（所有 Phase 共享的异常出口）
+- **粗蓝框**：START / END；**粗绿框**：finalize（生成 FINISHED 报告）
+- **实线（无标签）**：静态边 `add_edge`；**带标签虚线**：条件分支 `add_conditional_edges`，标签即路由函数返回值
+
+```mermaid
+graph TD
+    classDef startend fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
+    classDef phase fill:#fff3e0,stroke:#f57c00,stroke-width:1px
+    classDef step fill:#f1f8e9,stroke:#558b2f,stroke-width:1px
+    classDef fixstep fill:#fce4ec,stroke:#c2185b,stroke-width:1px
+    classDef gate fill:#ede7f6,stroke:#5e35b1,stroke-width:2px
+    classDef error fill:#ffebee,stroke:#c62828,stroke-width:2px
+    classDef final fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+
+    subgraph ENTRY [入口层]
+        __start__([START])
+        agent_entry{{agent_entry<br/>意图解析}}
+        chat_fallback[chat_fallback<br/>无意图则跳过]
+    end
+
+    subgraph PHASE0 [Phase 0 - 初始化]
+        init[init<br/>加载Design/校验]
+    end
+
+    subgraph PHASE1 [Phase 1 - Route + Ext]
+        run_eco_route[run_eco_route<br/>布线]
+        run_ext[run_ext<br/>寄生提取]
+    end
+
+    subgraph PHASE2 [Phase 2 - 并行 STA + PV + Signoff]
+        run_sta[run_sta<br/>静态时序分析]
+        run_pv[run_pv<br/>物理验证]
+        run_signoff[run_signoff<br/>签收检查]
+        phase2_gate{{phase2_gate<br/>barrier汇合}}
+        phase2_summary[phase2_summary<br/>违例汇总+中断]
+    end
+
+    subgraph PHASE3 [Phase 3 - 物理修复]
+        run_pt_fix_setup[run_pt_fix_setup<br/>Setup修复]
+        run_pt_fix_hold[run_pt_fix_hold<br/>Hold修复]
+        run_pt_fix_leakage[run_pt_fix_leakage<br/>Leakage修复]
+        phase3_gate{{phase3_gate<br/>barrier汇合}}
+        phase3_summary[phase3_summary<br/>修复汇总+迭代判断]
+    end
+
+    subgraph ERROR [异常处理]
+        error_handler[error_handler<br/>错误恢复/abort]
+    end
+
+    subgraph EXIT [出口]
+        finalize[finalize<br/>FINISHED报告生成]
+        __end__([END])
+    end
+
+    run_sta --> phase2_gate
+    run_pt_fix_setup --> phase3_gate
+    run_pv --> phase2_gate
+    chat_fallback --> __end__
+    __start__ --> agent_entry
+    run_pt_fix_leakage --> phase3_gate
+    run_pt_fix_hold --> phase3_gate
+    run_signoff --> phase2_gate
+    finalize --> __end__
+    run_ext -->|进入Phase2| run_sta
+    run_ext -->|失败| error_handler
+    phase2_gate -->|全部OK| phase2_summary
+    phase2_gate -->|有失败| error_handler
+    phase2_summary -->|选setup修复| run_pt_fix_setup
+    phase2_summary -->|选hold修复| run_pt_fix_hold
+    phase2_summary -->|选leakage修复| run_pt_fix_leakage
+    phase2_summary -->|abort| error_handler
+    phase2_summary -->|已收敛| finalize
+    phase3_gate -->|全部OK| phase3_summary
+    phase3_gate -->|有失败| error_handler
+    phase3_summary -->|继续迭代| init
+    phase3_summary -->|收敛/停止| finalize
+    phase3_summary -->|abort| error_handler
+    agent_entry -->|有意图| init
+    agent_entry -->|无意图| chat_fallback
+    init -->|OK| run_eco_route
+    init -->|校验失败| error_handler
+    run_eco_route -->|OK| run_ext
+    run_eco_route -->|布线失败| error_handler
+
+    class __start__,__end__ startend
+    class run_eco_route,run_ext,run_sta,run_pv,run_signoff step
+    class run_pt_fix_setup,run_pt_fix_hold,run_pt_fix_leakage fixstep
+    class phase2_gate,phase3_gate gate
+    class error_handler error
+    class finalize final
+```
+
+> **刷新方式**：代码拓扑变更后，运行 `PYTHONPATH=. python scripts/draw_graph.py` 即可重新生成 HTML 预览；上方 Mermaid 源码也会随 `scripts/draw_graph.py` 一起从 builder 提取，无需手绘。
+
 ***
 
 ## 三、LangGraph State状态结构体详细设计
@@ -367,28 +469,57 @@ Signoff通过：True/False
    - 从中断返回值（Command resume）读取 `user_fix_strategy`
    - return 更新后的 State（phase\_status\["phase2"] = "done"，prev\_\* 字段更新）
 
-#### Phase2 错误流转（区分阻断级 vs 警告级）
+#### Phase2 错误流转（★ 方案 A：所有并行 error 全阻断）
 
-run\_sta 是 Phase2 核心任务——Phase3 的 FixEco 依赖 STA 产生的 timing session，因此 **run\_sta error 是阻断级错误**，必须走 Error Handler。
+Phase2 并行 Step 任意一个执行 error → 都触发 Error Handler。
 
-run\_pv 和 run\_signoff 是**签核指标**，结果供用户参考但不构成暂停条件。PV/Signoff 执行异常（超时、license 失效等）在 `step_status` 里标记 error，但不触发 Error Handler——phase2\_summary 会把错误信息当警告展示在中断1 的 interrupt\_msg 里，用户可以选择忽略继续 Phase3 修复。
+**为什么不区分阻断级 vs 警告级**（方案 B 已被否决）：真实 EDA 场景中 PV/Signoff 执行异常可能意味着环境问题（license 过期、磁盘满、session 残留），这些问题不解决直接进 Phase3 只会浪费迭代时间。统一全阻断让用户在 Error Handler 里选择 retry（先把环境修好再重跑）或 abort。
 
 完整判断逻辑：
 
 ```python
-def node_phase2_summary(state: ECOState):
-    # 只有 run_sta error 才是阻断级 → 构造错误 → Error Handler
-    if state["step_status"].get("run_sta") == "error":
-        return {
-            "phase_status": {**state["phase_status"], "phase2": "error"},
-            "error_msg": state["error_msg"],
-            "current_phase": "phase2",
-            "current_step": "run_sta",
+def make_phase2_summary_node(p2_steps, has_phase3=True, p3_router="user_choice"):
+    """★ 工厂函数：构图时闭包捕获参数，决定报告内容 + 是否 interrupt"""
+    def node(state):
+        step_status = state.get("step_status", {})
+
+        # 方案 A：所有并行 Step error 全阻断
+        for step in p2_steps:
+            if step_status.get(step) == "error":
+                return {
+                    "phase_status": {**state.get("phase_status", {}), "phase2": "error"},
+                    "error_msg": state.get("error_msg", f"{step} 执行失败"),
+                    "current_phase": "phase2",
+                    "current_step": step,
+                }
+
+        # 根据闭包捕获的 p2_steps 动态生成报告
+        lines = [f"── Phase2 完成（第{state.get('iteration_cnt', 1)}轮迭代）──"]
+        if "run_sta" in p2_steps:
+            lines.append("【STA时序报告】")
+            lines.append(f"Setup违例：{state.get('setup_vio', 0)}条")
+            lines.append(f"Hold违例：{state.get('hold_vio', 0)}条")
+        if "run_pv" in p2_steps:
+            lines.append(f"【PV电气校验】PV通过：{state.get('pv_pass', False)}")
+        if "run_signoff" in p2_steps:
+            lines.append(f"【Signoff签核检查】Signoff通过：{state.get('signoff_pass', False)}")
+
+        result = {
+            "phase_status": {**state.get("phase_status", {}), "phase2": "done"},
+            "prev_setup_vio": state.get("setup_vio", 0),
+            "prev_hold_vio": state.get("hold_vio", 0),
         }
-    # PV/Signoff error 不是阻断级 → 继续进中断1，展示警告
-    # 如果 run_sta 成功，显式设 phase_status["phase2"] = "done"（覆盖 PV/Signoff error 可能留下的 error 标记），确保状态一致性
-    # 构建 interrupt_msg 时把 PV/Signoff error 当警告展示
-    ...
+
+        # 只有有 Phase3 且 router 是 user_choice 时才需要 interrupt
+        if has_phase3 and p3_router == "user_choice":
+            lines.extend(["── 请选择修复策略 ──", "可选：setup / hold / leakage"])
+            result["interrupt_msg"] = "\n".join(lines)
+            result["user_fix_strategy"] = interrupt(result["interrupt_msg"])
+        else:
+            result["interrupt_msg"] = "\n".join(lines)
+
+        return result
+    return node
 ```
 
 ***
@@ -953,14 +1084,14 @@ def route_after_init(state):
         return "error_handler"
     return "run_eco_route"
 
-def route_after_run_ext(state):
-    if state.get("step_status", {}).get("run_ext") == "error":
-        return "error_handler"
-    # ★ Send 共享字段白名单，避免并行节点互相覆盖
-    shared = {k: state[k] for k in _PHASE2_SHARED_KEYS if k in state}
-    return [Send("run_sta", shared),
-            Send("run_pv", shared),
-            Send("run_signoff", shared)]
+def make_route_after_run_ext(p2_steps):
+    """★ 工厂函数：构图时闭包捕获 p2_steps，运行时动态生成 Send 列表"""
+    def route(state):
+        if state.get("step_status", {}).get("run_ext") == "error":
+            return "error_handler"
+        shared = {k: state[k] for k in _PHASE2_SHARED_KEYS if k in state}
+        return [Send(name, shared) for name in p2_steps]
+    return route
 
 def route_after_phase2_gate(state):
     """★ Gate 汇聚后的单一条件路由"""
@@ -969,12 +1100,18 @@ def route_after_phase2_gate(state):
         return "error_handler"
     return "phase2_summary"
 
-def route_after_phase2_summary(state):
-    s = state.get("user_fix_strategy", "")
-    if s == "setup": return "run_fix_setup"
-    if s == "hold": return "run_fix_hold"
-    if s == "leakage": return "run_fix_leakage"
-    return "error_handler"
+def make_route_after_phase2_summary(p2_steps, p3_steps):
+    """★ 工厂函数：构图时闭包捕获 steps 列表，动态检查 + 动态路由"""
+    valid_fix_steps = {f"run_fix_{s.replace('run_fix_', '')}" for s in p3_steps}
+    def route(state):
+        step_status = state.get("step_status", {})
+        for step in p2_steps:
+            if step_status.get(step) == "error":
+                return "error_handler"  # ★ 方案 A：所有并行 error 全阻断
+        strategy = state.get("user_fix_strategy", "")
+        target = f"run_fix_{strategy}" if strategy else ""
+        return target if target in valid_fix_steps else "error_handler"
+    return route
 
 def route_after_phase3_gate(state):
     """★ Gate 汇聚后的单一条件路由"""
@@ -989,7 +1126,7 @@ def route_after_phase3_summary(state):
     return "finalize"
 
 
-# ============ 6. Gate 汇聚节点 ============
+# ============ 6. Gate 汇聚节点（★ 参数化工厂函数）============
 
 def _phase_gate(state, phase_name, expected_steps):
     step_status = state.get("step_status", {})
@@ -1004,11 +1141,30 @@ def _phase_gate(state, phase_name, expected_steps):
         ps[phase_name] = "running"
     return {"phase_status": ps, "current_phase": phase_name}
 
-def node_phase2_gate(state):
-    return _phase_gate(state, "phase2", ("run_sta", "run_pv", "run_signoff"))
+def make_phase2_gate_node(expected_steps):
+    """Phase2：所有注册的 step 都会执行，闭包捕获固定的检查清单"""
+    def gate(state):
+        return _phase_gate(state, "phase2", expected_steps)
+    return gate
 
+def make_phase3_gate_node(all_possible_steps):
+    """Phase3：互斥分支，只有一个 step 执行，运行时动态推断实际执行的 step"""
+    def gate(state):
+        step_status = state.get("step_status", {})
+        executed = tuple(
+            s for s in all_possible_steps
+            if step_status.get(s) in ("done", "error")
+        )
+        if not executed:
+            executed = all_possible_steps
+        return _phase_gate(state, "phase3", executed)
+    return gate
+
+# ★ 向后兼容包装器（测试代码可能直接 import）
+def node_phase2_gate(state):
+    return make_phase2_gate_node(("run_sta", "run_pv", "run_signoff"))(state)
 def node_phase3_gate(state):
-    return _phase_gate(state, "phase3", ("run_fix_setup", "run_fix_hold", "run_fix_leakage"))
+    return make_phase3_gate_node(("run_fix_setup", "run_fix_hold", "run_fix_leakage"))(state)
 
 
 # ============ 7. Error Handler（★ 路由下沉到节点内部）============
@@ -1054,61 +1210,105 @@ def make_error_handler_node():
     return node_error_handler
 
 
-# ============ 8. 图编排 ============
+# ============ 8. 图编排（★ 参数化构图）============
 
-def build_graph(mcp_server, checkpointer) -> CompiledStateGraph:
+"""
+★ 参数化构图设计说明：
+- pipeline dict 决定 Phase2 并行哪些 step、Phase3 有哪些 fix step、Phase3 用什么 router 策略
+- 构图时只注册 pipeline 里指定的节点和边，运行时图是固定的
+- 不会出现"注册了但不走"的节点/边——图拓扑 = 业务流程契约
+- 详细演进路径见架构文档第十一章
+"""
+
+_DEFAULT_PIPELINE = {
+    "name": "default",
+    "phases": {
+        "phase1": {"steps": ["run_eco_route", "run_ext"], "type": "serial"},
+        "phase2": {"steps": ["run_sta", "run_pv", "run_signoff"], "type": "parallel", "error_policy": "all_block"},
+        "phase3": {"steps": ["run_fix_setup", "run_fix_hold", "run_fix_leakage"], "type": "branch", "router": "user_choice"},
+    },
+}
+
+_PHASE2_STEP_RESULT_KEYS = {
+    "run_sta": ["setup_vio", "hold_vio"],
+    "run_pv": ["pv_pass"],
+    "run_signoff": ["signoff_pass"],
+}
+_PHASE3_STEP_RESULT_KEYS = {
+    "run_fix_setup": ["setup_vio"],
+    "run_fix_hold": ["hold_vio"],
+}
+
+
+def build_graph(
+    mcp_server, checkpointer=None,
+    llm_callable=None, skip_agent_entry=False,
+    pipeline=None,                        # ★ 新增：接收 pipeline 配置
+) -> CompiledStateGraph:
+    pipeline = pipeline or _DEFAULT_PIPELINE
+    phases_cfg = pipeline.get("phases", {})
+
+    p1_steps = tuple(phases_cfg["phase1"]["steps"])
+    p2_steps = tuple(phases_cfg["phase2"]["steps"])
+    phase3_cfg = phases_cfg.get("phase3", {})
+    p3_steps = tuple(phase3_cfg.get("steps", []))
+    p3_router = phase3_cfg.get("router", "user_choice")
+    has_phase3 = len(p3_steps) > 0
+
     builder = StateGraph(ECOState)
 
-    # 8.1 节点注册
-    builder.add_node("agent_entry", make_agent_entry_node())
-    builder.add_node("init", make_init_node())
-    builder.add_node("run_eco_route", make_step_node(mcp_server, "run_eco_route", "phase1"))
-    builder.add_node("run_ext", make_step_node(mcp_server, "run_ext", "phase1"))
-    builder.add_node("run_sta", make_step_node(mcp_server, "run_sta", "phase2",
-                     result_keys=["setup_vio", "hold_vio"]))
-    builder.add_node("run_pv", make_step_node(mcp_server, "run_pv", "phase2",
-                     result_keys=["pv_pass"]))
-    builder.add_node("run_signoff", make_step_node(mcp_server, "run_signoff", "phase2",
-                     result_keys=["signoff_pass"]))
-    builder.add_node("phase2_gate", node_phase2_gate)              # ★
-    builder.add_node("phase2_summary", make_phase2_summary_node())
-    builder.add_node("run_fix_setup", make_step_node(mcp_server, "run_fix_setup", "phase3",
-                     result_keys=["setup_vio"]))
-    builder.add_node("run_fix_hold", make_step_node(mcp_server, "run_fix_hold", "phase3",
-                     result_keys=["hold_vio"]))
-    builder.add_node("run_fix_leakage", make_step_node(mcp_server, "run_fix_leakage", "phase3"))
-    builder.add_node("phase3_gate", node_phase3_gate)              # ★
-    builder.add_node("phase3_summary", make_phase3_summary_node())
-    builder.add_node("error_handler", make_error_handler_node())    # ★ 内部 Command(goto)
+    # 8.1 固定节点（任何 pipeline 都有）
+    if not skip_agent_entry:
+        builder.add_node("agent_entry", make_agent_entry_node(llm_callable))
+    builder.add_node("init", make_init_node(mcp_server))
+    builder.add_node("error_handler", make_error_handler_node())
     builder.add_node("finalize", make_finalize_node())
 
-    # 8.2 入口
-    builder.set_entry_point("agent_entry")
+    # 8.2 Phase1：固定串行
+    for step in p1_steps:
+        builder.add_node(step, make_step_node(mcp_server, step, "phase1"))
+    builder.add_edge(p1_steps[0], p1_steps[1])
 
-    # 8.3 边和条件边
+    # 8.3 Phase2：动态并行（★ 根据 p2_steps 注册）
+    for step in p2_steps:
+        result_keys = _PHASE2_STEP_RESULT_KEYS.get(step, [])
+        builder.add_node(step, make_step_node(mcp_server, step, "phase2", result_keys=result_keys))
+        builder.add_edge(step, "phase2_gate")  # ★ 每个注册的 step 都 → gate
+
+    builder.add_node("phase2_gate", make_phase2_gate_node(p2_steps))  # ★ 工厂函数
+    builder.add_node("phase2_summary", make_phase2_summary_node(       # ★ 工厂函数
+        p2_steps, has_phase3=has_phase3, p3_router=p3_router))
+
+    builder.add_conditional_edges("run_ext", make_route_after_run_ext(p2_steps))  # ★ 工厂函数
+    builder.add_conditional_edges("phase2_gate", route_after_phase2_gate)
+
+    # 8.4 Phase3：动态分支（★ 根据 p3_steps 和 p3_router 决定注册什么）
+    if has_phase3:
+        for step in p3_steps:
+            result_keys = _PHASE3_STEP_RESULT_KEYS.get(step, [])
+            builder.add_node(step, make_step_node(mcp_server, step, "phase3", result_keys=result_keys))
+            builder.add_edge(step, "phase3_gate")
+
+        builder.add_node("phase3_gate", make_phase3_gate_node(p3_steps))
+        builder.add_node("phase3_summary", make_phase3_summary_node())
+
+        # Phase2 → Phase3 路由策略
+        if p3_router == "user_choice":
+            builder.add_conditional_edges("phase2_summary", make_route_after_phase2_summary(p2_steps, p3_steps))
+        elif p3_router.startswith("auto_"):
+            target_step = f"run_fix_{p3_router.replace('auto_', '')}"
+            builder.add_edge("phase2_summary", target_step)  # 硬路由，不中断
+
+        builder.add_conditional_edges("phase3_gate", route_after_phase3_gate)
+        builder.add_conditional_edges("phase3_summary", route_after_phase3_summary)
+    else:
+        # ★ 没有 Phase3 → phase2_summary 直接 → finalize
+        builder.add_edge("phase2_summary", "finalize")
+
+    # 8.5 入口和终节点
     builder.add_conditional_edges("agent_entry", route_after_agent_entry)
     builder.add_conditional_edges("init", route_after_init)
     builder.add_edge("run_eco_route", "run_ext")
-    builder.add_conditional_edges("run_ext", route_after_run_ext)   # Send 并行
-
-    # Phase2：三个并行 Step → phase2_gate → 单一条件路由
-    builder.add_edge("run_sta", "phase2_gate")                      # ★
-    builder.add_edge("run_pv", "phase2_gate")                       # ★
-    builder.add_edge("run_signoff", "phase2_gate")                  # ★
-    builder.add_conditional_edges("phase2_gate", route_after_phase2_gate)  # ★
-
-    # phase2_summary → Phase3 互斥分支
-    builder.add_conditional_edges("phase2_summary", route_after_phase2_summary)
-
-    # Phase3：三条都注册（LangGraph 要求所有可达路径），运行时只走一条
-    builder.add_edge("run_fix_setup", "phase3_gate")                # ★
-    builder.add_edge("run_fix_hold", "phase3_gate")                 # ★
-    builder.add_edge("run_fix_leakage", "phase3_gate")              # ★
-    builder.add_conditional_edges("phase3_gate", route_after_phase3_gate)  # ★
-
-    # phase3_summary → 迭代循环 或 finalize
-    builder.add_conditional_edges("phase3_summary", route_after_phase3_summary)
-
     builder.add_edge("finalize", END)
     # ★ error_handler 不加条件边！节点内部返回 Command(goto=target, update=reset)
 
@@ -1117,8 +1317,27 @@ def build_graph(mcp_server, checkpointer) -> CompiledStateGraph:
 
 # ============ 9. 编译 + Checkpointer ============
 
-checkpointer = SqliteSaver(sqlite3.connect("eco_checkpoints.db"))
-graph = build_graph(MockECOMCPServer("happy_path"), checkpointer)
+# ★ 默认 pipeline（和旧版硬编码等价）
+default_graph = build_graph(
+    MockECOMCPServer("happy_path"),
+    SqliteSaver(sqlite3.connect("eco_checkpoints.db")),
+)
+
+# ★ STA-only pipeline：Phase2 只跑 STA，跳过 Phase3
+sta_only_graph = build_graph(
+    MockECOMCPServer("happy_path"),
+    SqliteSaver(sqlite3.connect("eco_checkpoints_sta.db")),
+    pipeline={
+        "name": "sta_only",
+        "phases": {
+            "phase1": {"steps": ["run_eco_route", "run_ext"], "type": "serial"},
+            "phase2": {"steps": ["run_sta"], "type": "parallel"},
+            "phase3": {"steps": []},  # 空 → 跳过 Phase3
+        },
+    },
+)
+# ★ sta_only_graph 只注册 10 个节点（不注册 run_pv/run_signoff/phase3_*）
+# ★ phase2_summary 直接 → finalize
 ```
 
 ***

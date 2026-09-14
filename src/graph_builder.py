@@ -6,8 +6,9 @@ from langgraph.graph import END, StateGraph
 
 from src.conversation.agent import (
     make_agent_entry_node,
-    node_chat_fallback,
+    make_chat_fallback_node,
     route_from_agent,
+    route_from_chat,
 )
 from src.nodes.node_error_handler import make_error_handler_node
 from src.nodes.node_finalize import node_finalize
@@ -105,13 +106,11 @@ def build_graph(
     builder.add_node("init", make_init_node(mcp_server))
     builder.add_node("error_handler", make_error_handler_node())
     builder.add_node("finalize", node_finalize)
-    builder.add_node("chat_fallback", node_chat_fallback)
+    builder.add_node("chat_fallback", make_chat_fallback_node(llm_callable))
 
     # ========== Phase1：固定串行 ==========
     for step in p1_steps:
         builder.add_node(step, make_step_node(mcp_server, step, "phase1"))
-
-    builder.add_edge(p1_steps[0], p1_steps[1])
 
     # ========== Phase2：动态并行 ==========
     for step in p2_steps:
@@ -173,6 +172,8 @@ def build_graph(
     builder.add_conditional_edges("run_eco_route", route_after_run_eco_route)
 
     builder.add_edge("finalize", END)
-    builder.add_edge("chat_fallback", END)
+    # 对话自环：chat_fallback 解析出 design → init；否则回到本节点继续对话。
+    # 每轮对话都是一个全新任务，避免同一任务内重复 interrupt 的恢复陷阱
+    builder.add_conditional_edges("chat_fallback", route_from_chat)
 
     return builder.compile(checkpointer=checkpointer)
