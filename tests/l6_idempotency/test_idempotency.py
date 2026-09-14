@@ -73,7 +73,7 @@ class TestMockServerIdempotency:
         s2 = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
 
         assert s1.run_sta("d", "/tmp") == s2.run_sta("d", "/tmp")
-        assert s1.run_fix_setup("d", "/tmp", "setup") == s2.run_fix_setup("d", "/tmp", "setup")
+        assert s1.run_pt_fix_setup("d", "/tmp", "setup") == s2.run_pt_fix_setup("d", "/tmp", "setup")
 
     def test_multiple_runs_same_results(self):
         server = MockECOMCPServer(scenario="convergence", simulate_delay=0)

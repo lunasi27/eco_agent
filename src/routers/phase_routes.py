@@ -5,7 +5,7 @@ from typing import Literal
 from langgraph.types import Send
 
 from src.state import ECOState
-from src.utils.constants import PHASE_STEPS
+from src.utils.constants import PHASE_STEPS, STRATEGY_TO_STEP
 
 
 def route_after_init(state: ECOState) -> Literal["error_handler", "run_eco_route"]:
@@ -67,8 +67,9 @@ def make_route_after_phase2_summary(
     否则根据 user_fix_strategy 路由到对应的 Phase3 fix step。
     只在 p3_router == "user_choice" 时注册这个条件边。
     """
-    valid_fix_steps = {
-        f"run_fix_{s.replace('run_fix_', '')}" for s in p3_steps
+    valid_steps = set(p3_steps)
+    strategy_to_step = {
+        s: STRATEGY_TO_STEP[s] for s in STRATEGY_TO_STEP if STRATEGY_TO_STEP[s] in valid_steps
     }
 
     def route(state: ECOState):
@@ -78,8 +79,8 @@ def make_route_after_phase2_summary(
                 return "error_handler"
 
         strategy = state.get("user_fix_strategy", "")
-        target = f"run_fix_{strategy}" if strategy else ""
-        if target in valid_fix_steps:
+        target = strategy_to_step.get(strategy, "")
+        if target:
             return target
         return "error_handler"
 
@@ -88,7 +89,7 @@ def make_route_after_phase2_summary(
 
 def route_after_phase2_summary(
     state: ECOState,
-) -> Literal["error_handler", "run_fix_setup", "run_fix_hold", "run_fix_leakage"]:
+) -> Literal["error_handler", "run_pt_fix_setup", "run_pt_fix_hold", "run_pt_fix_leakage"]:
     """向后兼容：硬编码默认 Phase2 + Phase3 step 列表。"""
     return make_route_after_phase2_summary(
         PHASE_STEPS["phase2"], PHASE_STEPS["phase3"]

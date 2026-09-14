@@ -9,15 +9,21 @@ STEP_NAMES = (
     "run_sta",
     "run_pv",
     "run_signoff",
-    "run_fix_setup",
-    "run_fix_hold",
-    "run_fix_leakage",
+    "run_pt_fix_setup",
+    "run_pt_fix_hold",
+    "run_pt_fix_leakage",
 )
 
 PHASE_STEPS = {
     "phase1": ("run_eco_route", "run_ext"),
     "phase2": ("run_sta", "run_pv", "run_signoff"),
-    "phase3": ("run_fix_setup", "run_fix_hold", "run_fix_leakage"),
+    "phase3": ("run_pt_fix_setup", "run_pt_fix_hold", "run_pt_fix_leakage"),
+}
+
+STRATEGY_TO_STEP = {
+    "setup": "run_pt_fix_setup",
+    "hold": "run_pt_fix_hold",
+    "leakage": "run_pt_fix_leakage",
 }
 
 STEP_TO_PHASE = {
@@ -26,9 +32,9 @@ STEP_TO_PHASE = {
     "run_sta": "phase2",
     "run_pv": "phase2",
     "run_signoff": "phase2",
-    "run_fix_setup": "phase3",
-    "run_fix_hold": "phase3",
-    "run_fix_leakage": "phase3",
+    "run_pt_fix_setup": "phase3",
+    "run_pt_fix_hold": "phase3",
+    "run_pt_fix_leakage": "phase3",
 }
 
 BASE_RUN_DIR = "runs"

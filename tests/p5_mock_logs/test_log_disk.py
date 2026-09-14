@@ -77,13 +77,13 @@ class TestMockLogDiskWrite:
             mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
             rd = os.path.join(td, "runs", "d", "iter_001")
 
-            mcp.run_fix_setup("d", rd, fix_strategy="setup")
-            mcp.run_fix_hold("d", rd, fix_strategy="hold")
+            mcp.run_pt_fix_setup("d", rd, fix_strategy="setup")
+            mcp.run_pt_fix_hold("d", rd, fix_strategy="hold")
 
             logs = _list_files(rd, ".log")
-            assert "run_fix_setup.log" in logs
-            assert "run_fix_hold.log" in logs
-            content = _read_text(rd, "run_fix_setup.log")
+            assert "run_pt_fix_setup.log" in logs
+            assert "run_pt_fix_hold.log" in logs
+            content = _read_text(rd, "run_pt_fix_setup.log")
             assert "Status    : DONE" in content
             assert "setup_vio = 30" in content
 
@@ -158,10 +158,10 @@ class TestFinalizeLogAggregation:
         assert "日志文件（7）" in finished
         assert "run_eco_route.log" in finished
         assert "run_sta.log" in finished
-        assert "run_fix_setup.log" in finished
+        assert "run_pt_fix_setup.log" in finished
         assert "[✓] run_eco_route.log  (status=DONE)" in finished
         assert "报告文件（7）" in finished
-        assert "run_fix_setup.rpt" in finished
+        assert "run_pt_fix_setup.rpt" in finished
 
     def test_finished_file_has_convergence_comparison(self):
         mcp = MockECOMCPServer(scenario="convergence", simulate_delay=0)

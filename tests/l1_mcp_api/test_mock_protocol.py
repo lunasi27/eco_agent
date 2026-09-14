@@ -11,8 +11,8 @@ STEP_METHODS = [
     "run_sta",
     "run_pv",
     "run_signoff",
-    "run_fix_setup",
-    "run_fix_hold",
+    "run_pt_fix_setup",
+    "run_pt_fix_hold",
 ]
 
 
@@ -92,15 +92,15 @@ class TestReturnSchema:
         assert isinstance(res.get("signoff_pass"), bool)
         assert isinstance(res.get("violations"), list)
 
-    def test_run_fix_setup_return(self, happy_server):
-        res = happy_server.run_fix_setup("designA", "/tmp/run1", "setup")
+    def test_run_pt_fix_setup_return(self, happy_server):
+        res = happy_server.run_pt_fix_setup("designA", "/tmp/run1", "setup")
         assert isinstance(res, dict)
         assert res.get("fix_done") is True
         assert isinstance(res.get("setup_vio"), int)
         assert res["setup_vio"] == 30
 
-    def test_run_fix_hold_return(self, happy_server):
-        res = happy_server.run_fix_hold("designA", "/tmp/run1", "hold")
+    def test_run_pt_fix_hold_return(self, happy_server):
+        res = happy_server.run_pt_fix_hold("designA", "/tmp/run1", "hold")
         assert isinstance(res, dict)
         assert res.get("fix_done") is True
         assert isinstance(res.get("hold_vio"), int)
@@ -112,7 +112,7 @@ class TestReturnSchema:
         assert res["hold_vio"] == 25
 
     def test_convergence_scenario_fix_setup(self, convergence_server):
-        res = convergence_server.run_fix_setup("designA", "/tmp/run2", "setup")
+        res = convergence_server.run_pt_fix_setup("designA", "/tmp/run2", "setup")
         assert res["setup_vio"] == 15
 
 
@@ -140,7 +140,7 @@ class TestExceptionPassthrough:
     def test_phase3_fix_error(self):
         server = MockECOMCPServer(scenario="phase3_fix_error", simulate_delay=0)
         with pytest.raises(Exception, match="ECO Fix 工具异常"):
-            server.run_fix_setup("designA", "/tmp/run3", "setup")
+            server.run_pt_fix_setup("designA", "/tmp/run3", "setup")
 
     def test_non_fail_steps_in_error_scenario_still_work(self):
         server = MockECOMCPServer(scenario="phase2_sta_error", simulate_delay=0)
@@ -160,7 +160,7 @@ class TestIdempotency:
     def test_all_api_idempotent(self, happy_server):
         for method_name in STEP_METHODS:
             kwargs = {"design_name": "d", "run_dir": "/tmp/idem"}
-            if method_name.startswith("run_fix"):
+            if "fix" in method_name:
                 kwargs["fix_strategy"] = "setup"
             m = getattr(happy_server, method_name)
             assert m(**kwargs) == m(**kwargs), f"{method_name} 非幂等"

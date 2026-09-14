@@ -1,7 +1,3 @@
-common_env:
-  PDK_DIR: "/test/pdk"
-  EDA_LICENSE: "/test/licenses"
-
 steps:
   _test_echo:
     script: "tests/fixtures/scripts/_test_echo.csh"

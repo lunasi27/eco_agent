@@ -7,11 +7,11 @@ eco_agent:
   default_design_name: "demo_design"
 
 llm:
-  enabled: false
+  enabled: true
   provider: "openai"
-  model: "gpt-4o-mini"
-  base_url: null
-  api_key_env: "OPENAI_API_KEY"
+  model: "deepseek-chat"
+  base_url: "https://api.deepseek.com/v1"
+  api_key_env: "DEEPSEEK_API_KEY"
   temperature: 0
 
 checkpoint:
@@ -23,7 +23,7 @@ checkpoint:
   check_same_thread: false
 
 mock_server:
-  simulate_delay: 0.3
+  simulate_delay: 0.0
   # true 时每次 step 都写 .log/.rpt 到 run_dir
   write_logs: true
 

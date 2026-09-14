@@ -26,7 +26,7 @@ from src.routers.phase_routes import (
     route_after_run_eco_route,
 )
 from src.state import ECOState
-from src.utils.constants import PHASE_STEPS, STEP_TO_PHASE
+from src.utils.constants import PHASE_STEPS, STEP_TO_PHASE, STRATEGY_TO_STEP
 
 if TYPE_CHECKING:
     from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -63,8 +63,8 @@ _PHASE2_STEP_RESULT_KEYS: dict[str, list[str]] = {
 }
 
 _PHASE3_STEP_RESULT_KEYS: dict[str, list[str]] = {
-    "run_fix_setup": ["setup_vio"],
-    "run_fix_hold": ["hold_vio"],
+    "run_pt_fix_setup": ["setup_vio"],
+    "run_pt_fix_hold": ["hold_vio"],
 }
 
 
@@ -152,8 +152,10 @@ def build_graph(
                 "phase2_summary", make_route_after_phase2_summary(p2_steps, p3_steps)
             )
         elif p3_router.startswith("auto_"):
-            target_step = f"run_fix_{p3_router.replace('auto_', '')}"
-            builder.add_edge("phase2_summary", target_step)
+            strategy = p3_router.replace("auto_", "")
+            target_step = STRATEGY_TO_STEP.get(strategy, "")
+            if target_step and target_step in p3_steps:
+                builder.add_edge("phase2_summary", target_step)
 
         builder.add_conditional_edges("phase3_gate", route_after_phase3_gate)
         builder.add_conditional_edges("phase3_summary", route_after_phase3_summary)

@@ -1,0 +1,33 @@
+# config/run_context.yaml
+# 运行级配置 — 每次 ECO 迭代都改
+#
+# 占位符变量规则（Python 侧 resolve，resolve 顺序：
+#   project.yaml 内部 → run_context.yaml 引用 project.yaml）：
+#   - {project_name}    project.yaml 的 project_name
+#   - {base.xxx}        project.yaml.base 字典里的值
+#   - {design_name}     本文件 design_name 字段
+#
+# timeout 覆盖规则：
+#   run_context.yaml.execution.{step}.timeout_s  >  eda_tools.yaml.steps.{step}.timeout_s
+
+# ── Design 身份 ──
+# 默认等于 project_name，sub-design 时覆盖
+design_name: "{project_name}"
+
+# ── 本轮迭代的执行目录 ──
+# wrapper 会 cd 到这里执行命令
+execution_dir: "{base.run_eco_route}"
+
+# ── 本轮 ECO 迭代的输入/输出文件 ──
+# 目录引用 project.yaml.base，只有文件名每次迭代变
+preco_db:      "{base.run_eco_route}/DB/{design_name}_fixhold.enc"
+preco_db_next: "{base.run_eco_route}/DB/{design_name}_fixhold_fixsetup.enc"
+eco_scripts:   "{base.run_pt_fix}/output/setup.tcl"
+
+# ── 本轮 timeout 覆盖 ──
+# 只配那些需要覆盖 eda_tools 默认值的 step，不配的自动继承默认值
+execution:
+  run_sta:
+    timeout_s: 7200
+  run_pt_fix_setup:
+    timeout_s: 3600

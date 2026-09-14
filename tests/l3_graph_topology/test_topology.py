@@ -200,7 +200,7 @@ class TestFullTopologyRegistration:
         "agent_entry",
         "init", "run_eco_route", "run_ext",
         "run_sta", "run_pv", "run_signoff", "phase2_gate", "phase2_summary",
-        "run_fix_setup", "run_fix_hold", "run_fix_leakage", "phase3_gate", "phase3_summary",
+        "run_pt_fix_setup", "run_pt_fix_hold", "run_pt_fix_leakage", "phase3_gate", "phase3_summary",
         "error_handler", "finalize", "chat_fallback",
     }
 
@@ -271,19 +271,19 @@ class TestGateEdgeCases:
         from src.nodes.node_gates import node_phase3_gate
 
         state = {
-            "step_status": {"run_fix_setup": "done"},
+            "step_status": {"run_pt_fix_setup": "done"},
             "phase_status": {},
         }
         result = node_phase3_gate(state)
         assert result["phase_status"]["phase3"] == "done", (
-            "只执行过 run_fix_setup 且 done, gate 应认为已完成"
+            "只执行过 run_pt_fix_setup 且 done, gate 应认为已完成"
         )
 
     def test_phase3_gate_error_in_executed_step_takes_priority(self):
         from src.nodes.node_gates import node_phase3_gate
 
         state = {
-            "step_status": {"run_fix_setup": "done", "run_fix_hold": "error"},
+            "step_status": {"run_pt_fix_setup": "done", "run_pt_fix_hold": "error"},
             "phase_status": {},
         }
         result = node_phase3_gate(state)
@@ -293,7 +293,7 @@ class TestGateEdgeCases:
         from src.nodes.node_gates import node_phase3_gate
 
         state = {
-            "step_status": {"run_fix_setup": "done", "run_fix_hold": "done"},
+            "step_status": {"run_pt_fix_setup": "done", "run_pt_fix_hold": "done"},
             "phase_status": {},
         }
         result = node_phase3_gate(state)

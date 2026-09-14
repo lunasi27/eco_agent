@@ -82,13 +82,22 @@ def _interactive_override(cfg: dict) -> dict:
 
 
 def _auto_resume(state: dict) -> str:
+    error_step = state.get("current_step", "")
+    step_status = state.get("step_status", {})
+    has_error = any(s == "error" for s in step_status.values())
+
+    if has_error:
+        return "abort"
+
+    current_phase = state.get("current_phase", "")
+    phase_status = state.get("phase_status", {})
+    phase3_done = phase_status.get("phase3") == "done"
+
+    if current_phase == "phase3" or phase3_done:
+        return "stop"
+
     setup_vio = state.get("setup_vio", 0)
     hold_vio = state.get("hold_vio", 0)
-    user_iter_choice = state.get("user_iter_choice", "")
-    current_phase = state.get("current_phase", "")
-
-    if user_iter_choice == "" and current_phase == "phase3":
-        return "stop"
 
     if setup_vio > 0:
         return "setup"

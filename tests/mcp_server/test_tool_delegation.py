@@ -42,10 +42,10 @@ class TestToolDelegationMock:
         })
         assert result == {"pv_pass": True}
 
-    def test_run_fix_setup(self):
+    def test_run_pt_fix_setup(self):
         mock = MockECOMCPServer(scenario="happy_path")
         mcp = create_mcp_app(eco_server=mock)
-        result = _call(mcp, "run_fix_setup", {
+        result = _call(mcp, "run_pt_fix_setup", {
             "design_name": "MyDesign",
             "run_dir": "/tmp/runs",
             "fix_strategy": "setup_via_repair",

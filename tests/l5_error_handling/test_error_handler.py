@@ -57,12 +57,12 @@ class TestErrorMessageFormat:
         server = MockECOMCPServer(scenario="phase3_fix_error", simulate_delay=0)
         result = run_step(
             state={"design_name": "d", "run_dir": "/tmp", "step_status": {}, "phase_status": {}},
-            step_name="run_fix_setup",
+            step_name="run_pt_fix_setup",
             phase_name="phase3",
             mcp_server=server,
             extra_params={"fix_strategy": "setup"},
         )
-        assert result["error_msg"].startswith("[run_fix_setup] ")
+        assert result["error_msg"].startswith("[run_pt_fix_setup] ")
         assert "ECO Fix" in result["error_msg"]
 
     def test_error_is_propagated_to_error_handler_state(self, config):
@@ -129,7 +129,7 @@ class TestErrorHandlerInterrupt:
         _consume(g, Command(resume="setup"), cfg)
         s = g.get_state(cfg).interrupts[0].value
         assert "phase3" in str(s)
-        assert "run_fix_setup" in str(s)
+        assert "run_pt_fix_setup" in str(s)
 
 
 # ============================================================
@@ -210,12 +210,12 @@ class TestGetRetryStep:
 
     def test_phase3_fix_error(self):
         state = {
-            "step_status": {"run_fix_hold": "error"},
+            "step_status": {"run_pt_fix_hold": "error"},
             "phase_status": {"phase3": "error"},
-            "current_step": "run_fix_hold",
+            "current_step": "run_pt_fix_hold",
             "current_phase": "phase3",
         }
-        assert get_retry_step(state) == "run_fix_hold"
+        assert get_retry_step(state) == "run_pt_fix_hold"
 
     def test_empty_falls_back_to_run_eco_route(self):
         state = {"step_status": {}, "phase_status": {}, "current_step": "", "current_phase": ""}
@@ -326,6 +326,6 @@ class TestFindErrorContextFallback:
             "current_phase": "phase3",
         }
         error_step, error_phase = _find_error_context(state)
-        assert error_step == "run_fix_setup", (
-            f"phase3 error fallback 应找到 run_fix_setup, 实际: {error_step}"
+        assert error_step == "run_pt_fix_setup", (
+            f"phase3 error fallback 应找到 run_pt_fix_setup, 实际: {error_step}"
         )

@@ -19,7 +19,7 @@ def make_step_node(
         extra_params = {}
         if extra_params_builder is not None:
             extra_params = extra_params_builder(state)
-        elif step_name.startswith("run_fix_"):
+        elif "fix" in step_name:
             extra_params = {"fix_strategy": state.get("user_fix_strategy", "")}
         return run_step(
             state=state,

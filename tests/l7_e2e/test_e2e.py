@@ -159,7 +159,7 @@ class TestStateMachineCompleteness:
         expected_steps = [
             "init", "run_eco_route", "run_ext",
             "run_sta", "run_pv", "run_signoff",
-            "run_fix_setup",
+            "run_pt_fix_setup",
         ]
         for step in expected_steps:
             assert step_status.get(step) == "done", (

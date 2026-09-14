@@ -9,70 +9,76 @@ from src.mcp_server.protocol import ECOMCPServer
 
 MOCK_SCENARIOS: dict[str, dict] = {
     "happy_path": {
-        "run_eco_route":  {"route_done": True},
-        "run_ext":        {"ext_done": True},
-        "run_sta":        {"setup_vio": 125, "hold_vio": 47},
-        "run_pv":         {"pv_pass": True},
-        "run_signoff":    {"signoff_pass": True, "violations": []},
-        "run_fix_setup":  {"fix_done": True, "setup_vio": 30},
-        "run_fix_hold":   {"fix_done": True, "hold_vio": 10},
-        "run_fix_leakage": {"fix_done": True},
+        "run_eco_route":       {"route_done": True},
+        "run_ext":             {"ext_done": True},
+        "run_sta":             {"setup_vio": 125, "hold_vio": 47},
+        "run_pv":              {"pv_pass": True},
+        "run_signoff":         {"signoff_pass": True, "violations": []},
+        "run_pt_fix_setup":    {"fix_done": True, "setup_vio": 30},
+        "run_pt_fix_hold":     {"fix_done": True, "hold_vio": 10},
+        "run_pt_fix_leakage":  {"fix_done": True},
+        "run_pt_fix_drv":      {"fix_done": True},
+        "run_xtop_fix_hold":   {"fix_done": True, "hold_vio": 5},
     },
     "convergence": {
-        "run_eco_route":  {"route_done": True},
-        "run_ext":        {"ext_done": True},
-        "run_sta":        {"setup_vio": 80, "hold_vio": 25},
-        "run_pv":         {"pv_pass": True},
-        "run_signoff":    {"signoff_pass": True, "violations": []},
-        "run_fix_setup":  {"fix_done": True, "setup_vio": 15},
-        "run_fix_hold":   {"fix_done": True, "hold_vio": 5},
-        "run_fix_leakage": {"fix_done": True},
+        "run_eco_route":       {"route_done": True},
+        "run_ext":             {"ext_done": True},
+        "run_sta":             {"setup_vio": 80, "hold_vio": 25},
+        "run_pv":              {"pv_pass": True},
+        "run_signoff":         {"signoff_pass": True, "violations": []},
+        "run_pt_fix_setup":    {"fix_done": True, "setup_vio": 15},
+        "run_pt_fix_hold":     {"fix_done": True, "hold_vio": 5},
+        "run_pt_fix_leakage":  {"fix_done": True},
+        "run_pt_fix_drv":      {"fix_done": True},
+        "run_xtop_fix_hold":   {"fix_done": True, "hold_vio": 2},
     },
     "phase1_ext_error": {
-        "run_eco_route":  {"route_done": True},
-        "run_ext":        "raise Exception('StarRCX license 失效')",
+        "run_eco_route": {"route_done": True},
+        "run_ext":       "raise Exception('StarRCX license 失效')",
     },
     "phase2_sta_error": {
-        "run_eco_route":  {"route_done": True},
-        "run_ext":        {"ext_done": True},
-        "run_sta":        "raise Exception('STA 执行超时（超时时间1800s），进程被强制终止')",
-        "run_pv":         {"pv_pass": True},
-        "run_signoff":    {"signoff_pass": True, "violations": []},
+        "run_eco_route":       {"route_done": True},
+        "run_ext":             {"ext_done": True},
+        "run_sta":             "raise Exception('STA 执行超时（超时时间 1800s），进程被强制终止')",
+        "run_pv":              {"pv_pass": True},
+        "run_signoff":         {"signoff_pass": True, "violations": []},
     },
     "phase2_pv_error": {
-        "run_eco_route":  {"route_done": True},
-        "run_ext":        {"ext_done": True},
-        "run_sta":        {"setup_vio": 125, "hold_vio": 47},
-        "run_pv":         "raise Exception('PV LVS 检查失败，netlist mismatch')",
-        "run_signoff":    {"signoff_pass": True, "violations": []},
+        "run_eco_route": {"route_done": True},
+        "run_ext":       {"ext_done": True},
+        "run_sta":       {"setup_vio": 125, "hold_vio": 47},
+        "run_pv":        "raise Exception('PV LVS 检查失败，netlist mismatch')",
+        "run_signoff":   {"signoff_pass": True, "violations": []},
     },
     "phase2_signoff_error": {
-        "run_eco_route":  {"route_done": True},
-        "run_ext":        {"ext_done": True},
-        "run_sta":        {"setup_vio": 125, "hold_vio": 47},
-        "run_pv":         {"pv_pass": True},
-        "run_signoff":    "raise Exception('Signoff DRC 检查失败，mask violation')",
+        "run_eco_route": {"route_done": True},
+        "run_ext":       {"ext_done": True},
+        "run_sta":       {"setup_vio": 125, "hold_vio": 47},
+        "run_pv":        {"pv_pass": True},
+        "run_signoff":   "raise Exception('Signoff DRC 检查失败，mask violation')",
     },
     "phase3_fix_error": {
-        "run_eco_route":  {"route_done": True},
-        "run_ext":        {"ext_done": True},
-        "run_sta":        {"setup_vio": 125, "hold_vio": 47},
-        "run_pv":         {"pv_pass": True},
-        "run_signoff":    {"signoff_pass": True, "violations": []},
-        "run_fix_setup":  "raise Exception('ECO Fix 工具异常，setup 无法进一步收敛')",
-        "run_fix_hold":   "raise Exception('ECO Fix 工具异常，hold 无法进一步收敛')",
+        "run_eco_route":      {"route_done": True},
+        "run_ext":            {"ext_done": True},
+        "run_sta":            {"setup_vio": 125, "hold_vio": 47},
+        "run_pv":             {"pv_pass": True},
+        "run_signoff":        {"signoff_pass": True, "violations": []},
+        "run_pt_fix_setup":   "raise Exception('ECO Fix 工具异常，setup 无法进一步收敛')",
+        "run_pt_fix_hold":    "raise Exception('ECO Fix 工具异常，hold 无法进一步收敛')",
     },
 }
 
 STEP_LABELS: dict[str, str] = {
-    "run_eco_route": "Route (Innovus)",
-    "run_ext": "Parasitic Extraction (StarRCX)",
-    "run_sta": "Static Timing Analysis (PrimeTime)",
-    "run_pv": "Physical Verification (Calibre)",
-    "run_signoff": "Signoff Check",
-    "run_fix_setup": "ECO Fix - Setup",
-    "run_fix_hold": "ECO Fix - Hold",
-    "run_fix_leakage": "ECO Fix - Leakage",
+    "run_eco_route":      "Route (Innovus)",
+    "run_ext":            "Parasitic Extraction (StarRCX)",
+    "run_sta":            "Static Timing Analysis (PrimeTime)",
+    "run_pv":             "Physical Verification (Calibre)",
+    "run_signoff":        "Signoff Check",
+    "run_pt_fix_setup":   "PT ECO Fix - Setup",
+    "run_pt_fix_hold":    "PT ECO Fix - Hold",
+    "run_pt_fix_leakage": "PT ECO Fix - Leakage",
+    "run_pt_fix_drv":     "PT ECO Fix - DRV",
+    "run_xtop_fix_hold":  "XTOP ECO Fix - Hold",
 }
 
 
@@ -182,12 +188,17 @@ class MockECOMCPServer(ECOMCPServer):
     def run_signoff(self, design_name: str, run_dir: str) -> dict:
         return self._execute("run_signoff", design_name=design_name, run_dir=run_dir)
 
-    def run_fix_setup(self, design_name: str, run_dir: str, fix_strategy: str) -> dict:
-        return self._execute("run_fix_setup", design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy)
+    def run_pt_fix_setup(self, design_name: str, run_dir: str, fix_strategy: str) -> dict:
+        return self._execute("run_pt_fix_setup", design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy)
 
-    def run_fix_hold(self, design_name: str, run_dir: str, fix_strategy: str) -> dict:
-        return self._execute("run_fix_hold", design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy)
+    def run_pt_fix_hold(self, design_name: str, run_dir: str, fix_strategy: str) -> dict:
+        return self._execute("run_pt_fix_hold", design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy)
 
-    def run_fix_leakage(self, design_name: str, run_dir: str, fix_strategy: str) -> dict:
-        return self._execute("run_fix_leakage", design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy)
+    def run_pt_fix_leakage(self, design_name: str, run_dir: str, fix_strategy: str) -> dict:
+        return self._execute("run_pt_fix_leakage", design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy)
 
+    def run_pt_fix_drv(self, design_name: str, run_dir: str, fix_strategy: str) -> dict:
+        return self._execute("run_pt_fix_drv", design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy)
+
+    def run_xtop_fix_hold(self, design_name: str, run_dir: str, fix_strategy: str) -> dict:
+        return self._execute("run_xtop_fix_hold", design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy)

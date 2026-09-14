@@ -244,6 +244,99 @@ finalize:
 
 ---
 
+## 🧪 怎么用（MCP Server）
+
+ECO Agent 内置一个完整的 MCP (Model Context Protocol) Server，将 ECO 流水线的 10 个 step 暴露为 MCP Tools。支持 Mock 和 Real 两种后端，通过 `ECO_BACKEND` 环境变量切换，LangGraph 和 MCP Inspector 都能直接调用。
+
+> 完整架构、配置文件设计、占位符 Resolve、Wrapper 脚本机制 → 详见 [docs/MCP Server 详细设计.md](docs/MCP%20Server%20详细设计.md)
+
+### 启动方式
+
+```bash
+# Mock 模式（默认）— 零依赖，本地调试
+ECO_BACKEND=mock python -m src.mcp_server.stdio_runner
+
+# 指定 scenario
+ECO_BACKEND=mock ECO_SCENARIO=phase2_sta_error python -m src.mcp_server.stdio_runner
+
+# Real 模式 — 接入真实 EDA，3 个配置文件路径可独立指定
+ECO_BACKEND=real \
+  EDA_TOOLS_PATH=config/eda_tools.yaml \
+  PROJECT_CONFIG=config/project.yaml \
+  RUN_CONTEXT=config/run_context.yaml \
+  python -m src.mcp_server.stdio_runner
+
+# 用 MCP Inspector 交互式调试（浏览器里能看到所有 10 个 Tool + 参数说明 + 返回值）
+npx @modelcontextprotocol/inspector
+# Transport 选 stdio，Command 填：python -m src.mcp_server.stdio_runner
+```
+
+### Dry-run 模式（快速验证配置）
+
+在调用 RealECOMCPServer.run_step 时加 `dry_run=True`，只打印 resolve 后的完整环境变量和命令，不真正执行：
+
+```bash
+python -c "
+from src.mcp_server.real import RealECOMCPServer
+srv = RealECOMCPServer()
+srv.run_step('run_sta', dry_run=True)
+"
+```
+
+输出示例：
+
+```
+[DRY-RUN] Step: run_sta
+  CMD           = run_sta.csh SOC_XXX_SUB all CTS ptpx -input /data/.../0.outgoing/SOC_XXX_SUB -output /tmpdata/.../pt_rpt
+  EXECUTION_DIR = /data/.../2.APR.SOC_XXX_SUB
+  WAIT_FILE     = /tmpdata/.../pt_rpt/SOC_XXX_SUB/SOC_XXX_SUB.sta.ok
+  LOG_DIR       = /tmpdata/.../pt_rpt/SOC_XXX_SUB
+  TIMEOUT       = 7200s
+  PARSE_CFG     = {'setup_vio': 'Setup Violations:\\s*(\\d+)', 'hold_vio': 'Hold Violations:\\s*(\\d+)'}
+```
+
+### RealECOMCPServer 核心 API
+
+```python
+from src.mcp_server.real import RealECOMCPServer
+
+srv = RealECOMCPServer()                              # 用默认 3 个 yaml 路径
+srv = RealECOMCPServer(
+    eda_tools_path="config/eda_tools.yaml",
+    project_path="config/project.yaml",
+    run_context_path="config/run_context.yaml",
+)
+
+# dry-run（只看 resolve 结果，不真正执行）
+srv.run_step("run_sta", dry_run=True)
+
+# 真执行
+result = srv.run_step("run_sta")                      # 返回 parse_patterns 提取的 dict
+result = srv.run_step("run_pt_fix_setup", fix_strategy="setup_via_repair")
+
+# debug 模式（wrapper 会 set -x + 打印所有环境变量）
+srv.run_step("run_sta", debug=True)
+```
+
+### 10 个 MCP Tools
+
+| Tool | 引擎 | 说明 |
+|---|---|---|
+| `run_eco_route` | Innovus | ECO 路由初始化 |
+| `run_ext` | StarRCX | 寄生参数抽取 |
+| `run_sta` | PrimeTime | 静态时序分析，返回 setup/hold violations |
+| `run_pv` | Calibre | 物理验证（LVS+DRC） |
+| `run_signoff` | Innovus | Signoff 签核检查 |
+| `run_pt_fix_setup` | PT (Innovus) | PT 引擎 fix setup |
+| `run_pt_fix_hold` | PT (Innovus) | PT 引擎 fix hold |
+| `run_pt_fix_leakage` | PT (Innovus) | PT 引擎 fix leakage |
+| `run_pt_fix_drv` | PT (Innovus) | PT 引擎 fix DRV |
+| `run_xtop_fix_hold` | XTOP | XTOP 引擎 fix hold（PT 的备选/补充） |
+
+Fix 类 Tool 额外接收 `fix_strategy` 参数，MCP Inspector 或 LangGraph 调用时传入。
+
+---
+
 ## State 字段
 
 LangGraph ECOState（TypedDict with Annotated reducers）：
@@ -279,8 +372,11 @@ LangGraph ECOState（TypedDict with Annotated reducers）：
 ```
 eco_agent/
 ├── config/
-│   ├── default.yaml              # 默认配置
-│   └── production.yaml           # 生产环境配置（严格校验）
+│   ├── default.yaml              # 默认配置（LangGraph + 框架级）
+│   ├── production.yaml           # 生产环境配置（严格校验）
+│   ├── eda_tools.yaml            # MCP Server Step 注册表（几乎不改）
+│   ├── project.yaml              # MCP Server 项目级配置（换工程改一次）
+│   └── run_context.yaml          # MCP Server 运行级配置（每次迭代改）
 ├── src/
 │   ├── main.py                   # CLI 入口
 │   ├── graph_builder.py          # LangGraph 图构建（注册所有节点和边）
@@ -300,8 +396,11 @@ eco_agent/
 │   │   └── phase_routes.py       # 条件路由函数（route_after_phase2_summary 等）
 │   │
 │   ├── mcp_server/
-│   │   ├── protocol.py           # ECOMCPServer Protocol 接口契约
-│   │   └── mock.py               # MockECOMCPServer 实现（7 个 scenario）
+│   │   ├── protocol.py           # ECOMCPServer Protocol 接口契约（10 个 step）
+│   │   ├── mock.py               # MockECOMCPServer 实现（7 个 scenario）
+│   │   ├── real.py               # RealECOMCPServer 实现（读 3 个 yaml + wrapper）
+│   │   ├── mcp_app.py            # FastMCP 注册 10 个 @tool()
+│   │   └── stdio_runner.py       # stdio Transport 启动入口
 │   │
 │   ├── conversation/
 │   │   └── agent.py              # agent_entry LLM 对话节点
@@ -330,10 +429,13 @@ eco_agent/
 │   └── config/                   # YAML 配置加载 + deep merge
 │
 ├── scripts/
-│   └── smoke_benchmark.py        # 快速 smoke test + 耗时统计
+│   ├── smoke_benchmark.py        # 快速 smoke test + 耗时统计
+│   └── eda/
+│       └── run_step_wrapper.csh  # 通用 EDA step 执行 wrapper（所有 10 个 step 共用）
 ├── docs/
-│   ├── 功能清单.md               # 173 项功能完备性清单
-│   └── 项目架构设计.md            # 完整设计文档
+│   ├── MCP Server 详细设计.md     # MCP Server 子系统完整设计（架构/配置/resolve/wrapper）
+│   ├── 项目架构设计.md            # LangGraph + Agent 整体架构
+│   └── 功能清单.md               # 173 项功能完备性清单
 ├── pyproject.toml
 └── README.md
 ```
@@ -428,8 +530,10 @@ python -W error::ResourceWarning -m pytest tests/
 
 | 方向 | 当前状态 | 说明 |
 |---|---|---|
-| `run_fix_leakage` | ⏸ 占位 | Phase3 分支的 leakage 修复策略，节点已注册，内部逻辑待实现 |
-| 真实 EDA 接入 | 🎯 接口已就绪 | 将 `MockECOMCPServer` 替换为真实实现，遵守 `ECOMCPServer` Protocol 契约 |
+| `run_fix_leakage` | ✅ 已接入 | RealECOMCPServer + wrapper + project.yaml.step_command，与其他 fix 类 step 统一 |
+| `run_pt_fix_drv` | ✅ 已接入 | PT 引擎 DRV 修复，新增的第 9 个 step |
+| `run_xtop_fix_hold` | ✅ 已接入 | XTOP 引擎 hold 修复，第 10 个 step，与 PT fix 并行的引擎选择 |
+| 真实 EDA 接入 | ✅ 已就绪 | RealECOMCPServer 读 3 个 yaml → wrapper 执行 cshell/PDS 命令，只需填充真实路径和 step_command |
 | CLI 重构 | 📍 原型 | 当前 argparse 实现，后续可升级为 Typer 增加 `config list` / `thread resume` 等子命令 |
 | LLM Gateway | 📍 agent_entry 已集成 | 可扩展为多 LLM 路由（不同意图用不同模型） |
 | 指标/监控 | 📍 step_elapsed 已采集 | 接入 Prometheus / Grafana 展示流水线耗时 |

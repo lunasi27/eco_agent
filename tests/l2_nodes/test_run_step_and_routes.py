@@ -79,13 +79,13 @@ class TestRunStep:
         server = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
         result = run_step(
             state=BASE_STATE,
-            step_name="run_fix_setup",
+            step_name="run_pt_fix_setup",
             phase_name="phase3",
             mcp_server=server,
             result_keys=["setup_vio"],
             extra_params={"fix_strategy": "setup"},
         )
-        assert result["step_status"]["run_fix_setup"] == "done"
+        assert result["step_status"]["run_pt_fix_setup"] == "done"
         assert result["setup_vio"] == 30
 
     def test_phase_status_preserves_existing_phases(self):
@@ -167,7 +167,7 @@ class TestRouteAfterPhase2Summary:
             "step_status": {"run_sta": "done", "run_pv": "done"},
             "user_fix_strategy": "setup",
         }
-        assert route_after_phase2_summary(state) == "run_fix_setup"
+        assert route_after_phase2_summary(state) == "run_pt_fix_setup"
 
     def test_hold_strategy(self):
         state = {
@@ -175,7 +175,7 @@ class TestRouteAfterPhase2Summary:
             "step_status": {"run_sta": "done"},
             "user_fix_strategy": "hold",
         }
-        assert route_after_phase2_summary(state) == "run_fix_hold"
+        assert route_after_phase2_summary(state) == "run_pt_fix_hold"
 
     def test_invalid_strategy_goes_to_error_handler(self):
         state = {

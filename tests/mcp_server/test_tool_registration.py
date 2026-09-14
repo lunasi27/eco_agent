@@ -9,13 +9,15 @@ EXPECTED_TOOLS = {
     "run_sta",
     "run_pv",
     "run_signoff",
-    "run_fix_setup",
-    "run_fix_hold",
-    "run_fix_leakage",
+    "run_pt_fix_setup",
+    "run_pt_fix_hold",
+    "run_pt_fix_leakage",
+    "run_pt_fix_drv",
+    "run_xtop_fix_hold",
 }
 
 
-def test_all_8_tools_registered():
+def test_all_10_tools_registered():
     mcp = create_mcp_app()
     tools = mcp._tool_manager._tools
     assert set(tools.keys()) == EXPECTED_TOOLS
@@ -23,7 +25,7 @@ def test_all_8_tools_registered():
 
 def test_tool_count():
     mcp = create_mcp_app()
-    assert len(mcp._tool_manager._tools) == 8
+    assert len(mcp._tool_manager._tools) == 10
 
 
 def test_run_sta_input_schema():
@@ -36,9 +38,9 @@ def test_run_sta_input_schema():
     assert set(schema["required"]) == {"design_name", "run_dir"}
 
 
-def test_run_fix_setup_input_schema():
+def test_run_pt_fix_setup_input_schema():
     mcp = create_mcp_app()
-    tool = mcp._tool_manager._tools["run_fix_setup"]
+    tool = mcp._tool_manager._tools["run_pt_fix_setup"]
     schema = tool.parameters
     assert "fix_strategy" in schema["properties"]
     assert set(schema["required"]) == {"design_name", "run_dir", "fix_strategy"}

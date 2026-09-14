@@ -17,7 +17,7 @@ def create_mcp_app(
 ) -> FastMCP:
     """创建 ECO Agent MCP Server 实例。
 
-    8 个 Tool 方法内部只做委托：
+    10 个 Tool 方法内部只做委托：
         Tool 方法 -> eco_server.run_xxx() -> Protocol 实现（Mock 或 Real）
 
     Args:
@@ -26,7 +26,7 @@ def create_mcp_app(
         server_name: MCP Server 名称，客户端识别用。
 
     Returns:
-        配置好 8 个 Tools 的 FastMCP 实例。
+        配置好 10 个 Tools 的 FastMCP 实例。
     """
     instance = eco_server or MockECOMCPServer(scenario="happy_path")
 
@@ -40,7 +40,7 @@ def create_mcp_app(
 
         Args:
             design_name: Design 名称，如 "MyDesign"
-            run_dir:     当前迭代运行目录，如 "runs/MyDesign/iter_001"
+            run_dir:     当前迭代运行目录
 
         Returns:
             {"route_done": bool} 布线是否成功完成
@@ -123,10 +123,10 @@ def create_mcp_app(
         return instance.run_signoff(design_name=design_name, run_dir=run_dir)
 
     @mcp.tool()
-    def run_fix_setup(design_name: str, run_dir: str, fix_strategy: str) -> dict:
-        """执行 Setup 违例 ECO 修复。
+    def run_pt_fix_setup(design_name: str, run_dir: str, fix_strategy: str) -> dict:
+        """执行 PT ECO Setup 违例修复。
 
-        ECO 流水线 Phase3 分支任务之一。
+        ECO 流水线 Phase3 分支任务之一，PT 引擎修复 setup 违例。
 
         Args:
             design_name:    Design 名称
@@ -137,17 +137,17 @@ def create_mcp_app(
             {"fix_done": bool, "setup_vio": int} 修复状态和剩余违例数
 
         Raises:
-            Exception: ECO Fix 工具异常时抛出
+            Exception: PT ECO Fix 工具异常时抛出
         """
-        return instance.run_fix_setup(
+        return instance.run_pt_fix_setup(
             design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy,
         )
 
     @mcp.tool()
-    def run_fix_hold(design_name: str, run_dir: str, fix_strategy: str) -> dict:
-        """执行 Hold 违例 ECO 修复。
+    def run_pt_fix_hold(design_name: str, run_dir: str, fix_strategy: str) -> dict:
+        """执行 PT ECO Hold 违例修复。
 
-        ECO 流水线 Phase3 分支任务之一。
+        ECO 流水线 Phase3 分支任务之一，PT 引擎修复 hold 违例。
 
         Args:
             design_name:    Design 名称
@@ -158,17 +158,17 @@ def create_mcp_app(
             {"fix_done": bool, "hold_vio": int} 修复状态和剩余违例数
 
         Raises:
-            Exception: ECO Fix 工具异常时抛出
+            Exception: PT ECO Fix 工具异常时抛出
         """
-        return instance.run_fix_hold(
+        return instance.run_pt_fix_hold(
             design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy,
         )
 
     @mcp.tool()
-    def run_fix_leakage(design_name: str, run_dir: str, fix_strategy: str) -> dict:
-        """执行 Leakage 泄漏修复。
+    def run_pt_fix_leakage(design_name: str, run_dir: str, fix_strategy: str) -> dict:
+        """执行 PT ECO Leakage 泄漏修复。
 
-        ECO 流水线 Phase3 分支任务之一，当前为占位实现。
+        ECO 流水线 Phase3 分支任务之一，PT 引擎修复 leakage 违例。
 
         Args:
             design_name:    Design 名称
@@ -179,9 +179,51 @@ def create_mcp_app(
             {"fix_done": bool} 修复是否成功
 
         Raises:
-            Exception: ECO Fix 工具异常时抛出
+            Exception: PT ECO Fix 工具异常时抛出
         """
-        return instance.run_fix_leakage(
+        return instance.run_pt_fix_leakage(
+            design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy,
+        )
+
+    @mcp.tool()
+    def run_pt_fix_drv(design_name: str, run_dir: str, fix_strategy: str) -> dict:
+        """执行 PT ECO DRV (Design Rule Violation) 修复。
+
+        ECO 流水线 Phase3 分支任务之一，PT 引擎修复 DRV 违例。
+
+        Args:
+            design_name:    Design 名称
+            run_dir:        当前迭代运行目录
+            fix_strategy:   修复策略
+
+        Returns:
+            {"fix_done": bool} 修复是否成功
+
+        Raises:
+            Exception: PT ECO Fix 工具异常时抛出
+        """
+        return instance.run_pt_fix_drv(
+            design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy,
+        )
+
+    @mcp.tool()
+    def run_xtop_fix_hold(design_name: str, run_dir: str, fix_strategy: str) -> dict:
+        """执行 XTOP ECO Hold 违例修复。
+
+        ECO 流水线 Phase3 分支任务之一，XTOP 引擎修复 hold 违例（PT 引擎的备选/补充）。
+
+        Args:
+            design_name:    Design 名称
+            run_dir:        当前迭代运行目录
+            fix_strategy:   修复策略
+
+        Returns:
+            {"fix_done": bool, "hold_vio": int} 修复状态和剩余违例数
+
+        Raises:
+            Exception: XTOP ECO Fix 工具异常时抛出
+        """
+        return instance.run_xtop_fix_hold(
             design_name=design_name, run_dir=run_dir, fix_strategy=fix_strategy,
         )
 

@@ -1,0 +1,73 @@
+# config/project.yaml
+# 项目级配置 — 换工程时改一次，工程内不动
+#
+# 占位符变量规则（Python 侧 resolve）：
+#   - {project_name}   本文件 project_name 字段
+#   - {work_dir}       本文件 work_dir 字段
+#   - {design_name}    run_context.design_name（引用本文件 project_name）
+#   - {base.xxx}       base 字典里对应的值（支持链式引用，占位符 resolve 顺序：
+#                       先 resolve 本文件内部的，再 resolve run_context 里引用本文件的）
+
+# ── 项目身份 ──
+project_name: "SOC_XXX_SUB"
+work_dir: "/data/SDXXXX/user/w009999"
+
+# ── 集群调度（list，可多个）──
+dsub_queue:
+  - "dsub -A root.xxxx.class -q lang -R 'cpu=8;mem=40000'"
+
+# ── IT 环境初始化脚本 ──
+# wrapper 执行命令前先 source 这个脚本（设置 PATH、EDA_HOME、license 等）
+project_cshrc: "/data/SDXXXX/common/0.c_shell/project.cshrc"
+
+# ── base — 物理工作目录（统一对齐 step 名）──
+# 命名规则：run_{step_name}，sta 拆成 bin（执行入口）和 rpt（报告输出），
+#          PT/XTOP fix 是引擎目录，承载多个 step 共用
+base:
+  run_eco_route:    "{work_dir}/2.APR.{project_name}"
+  run_ext:          "{work_dir}/3.EXT.{project_name}"
+  run_sta_bin:      "{base.run_eco_route}/tools/sta"
+  run_sta_rpt:      "/tmpdata/SDXXX_PD/user/w009999/pt_rpt"
+  run_pv:           "/tmpdata/SDXXX_PD/user/w009999/7.PV"
+  run_signoff:      "{base.run_eco_route}"
+  run_pt_fix:       "{work_dir}/4.PTECO.{project_name}"
+  run_xtop_fix:     "{work_dir}/4.xtop.{project_name}"
+  dataout:          "{work_dir}/0.outgoing/{project_name}"
+
+# ── logs — 日志目录（按 step 名对齐，PT/XTOP fix 是引擎级日志目录，多 step 共用）──
+logs:
+  run_eco_route:    "{base.run_eco_route}/log"
+  run_ext:          "{base.run_ext}/run/LOGS"
+  run_sta:          "{base.run_sta_rpt}/{project_name}"
+  run_pv:           "{base.run_pv}/log"
+  run_signoff:      "{base.run_signoff}/log/signoff_check_*"
+  run_pt_fix:       "{base.run_pt_fix}/log"
+  run_xtop_fix:     "{base.run_xtop_fix}/log"
+
+# ── wait_flags — 每个 step 的完成标志文件（Python 传给 wrapper 的 $WAIT_FILE）──
+wait_flags:
+  run_eco_route:     "{base.dataout}/{project_name}.def.ok"
+  run_ext:           "{base.run_ext}/run/LOGS/{project_name}.spef.smc/LOG/ok.flag"
+  run_sta:           "{base.run_sta_rpt}/{project_name}/{project_name}.sta.ok"
+  run_pv:            "{base.run_pv}/log/{project_name}.pv.ok"
+  run_signoff:       "{base.run_signoff}/log/signoff_check.ok"
+  run_pt_fix_setup:  "{base.run_pt_fix}/output/fix_setup/fix_setup.tcl"
+  run_pt_fix_hold:   "{base.run_pt_fix}/output/fix_hold/fix_hold.tcl"
+  run_pt_fix_leakage: "{base.run_pt_fix}/output/fix_leakage/fix_leakage.tcl"
+  run_pt_fix_drv:    "{base.run_pt_fix}/output/fix_drv/fix_drv.tcl"
+  run_xtop_fix_hold: "{base.run_xtop_fix}/output/xtop_fix_hold.tcl"
+
+# ── step_command — 每个 step 的实际调用命令 ──
+# Python 侧 resolve 占位符后，通过 $CMD 环境变量传给 wrapper 执行
+# wrapper 里 eval "$CMD"，所以支持 shell 语法（source、管道、重定向等）
+step_command:
+  run_eco_route:        "pds_innovus 6.ecoRt"
+  run_ext:              "pds_starrc DEF_SMC"
+  run_sta:              "run_sta.csh {project_name} all CTS ptpx -input {base.dataout} -output {base.run_sta_rpt}"
+  run_pv:               "source 100P_PV.csh {design_name}"
+  run_signoff:          "pds_innovus 6-2.signoff_check"
+  run_pt_fix_setup:     "pds_pteco setup"
+  run_pt_fix_hold:      "pds_pteco hold"
+  run_pt_fix_leakage:   "pds_pteco leakage"
+  run_pt_fix_drv:       "pds_pteco ldrc"
+  run_xtop_fix_hold:    "source run_fix_hold.csh {design_name}"
