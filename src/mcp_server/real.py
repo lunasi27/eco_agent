@@ -10,7 +10,7 @@ import yaml
 from src.mcp_server.parsers import parse_output
 from src.mcp_server.protocol import STEP_NAMES, ECOMCPServer
 
-# project.yaml.timeout_s 未配置某 step 时的兜底值，防止 subprocess 永久挂死
+# config.yaml.timeout_s 未配置某 step 时的兜底值，防止 subprocess 永久挂死
 DEFAULT_TIMEOUT_S = 3600
 
 # csh 可执行文件路径：EDA 机器通常是 /bin/csh（RHEL 上一般软链 tcsh）；
@@ -21,15 +21,15 @@ DEFAULT_CSH_BIN = "/bin/csh"
 class RealECOMCPServer(ECOMCPServer):
     """真实 EDA 工具调用实现。
 
-    配置（2 个 yaml，按生命周期分层）：
-        config/project.yaml     项目级：project_name / base / logs / wait_flags /
+    配置（1 个 yaml，按生命周期分两部分）：
+        config/config.yaml  Part 1 项目级：project_name / base / logs / wait_flags /
                                 step_command（str 或 list）/ timeout_s
-        config/run_context.yaml 运行级：design_name / execution_dir / 输入输出文件
+                            Part 2 运行级：design_name / execution_dir / 输入输出文件
 
     resolve 顺序：
-        design_name（只依赖 project_name）
-        → project.yaml 多轮迭代 resolve（step_command 里可以用 {design_name}）
-        → run_context.yaml resolve
+        design_name（只依赖 project_name，先解析）
+        → 整个 config.yaml 多轮迭代 resolve（step_command 里可以用 {design_name}，
+          preco_db 里可以用 {base.run_eco_route}，多轮自然解决依赖）
 
     执行模型：
         每个 step → 取 step_command（str 归一化成 1 条，list 保持多条）
@@ -43,30 +43,23 @@ class RealECOMCPServer(ECOMCPServer):
 
     def __init__(
         self,
-        project_path: str = "config/project.yaml",
-        run_context_path: str = "config/run_context.yaml",
+        config_path: str = "config/config.yaml",
         wrapper_path: str | None = None,
     ):
-        self.project = self._load_yaml(project_path)
-        self.run_context = self._load_yaml(run_context_path)
+        self.config = self._load_yaml(config_path)
         self.wrapper_path = wrapper_path or self.WRAPPER_SCRIPT
 
         # 1. design_name 只依赖 project_name，先解析出来，
-        #    这样 project.yaml.step_command 里的 {design_name} 才能正确展开
+        #    这样 step_command 里的 {design_name} 才能正确展开
         self._design_name = self._resolve_one(
-            str(self.run_context.get("design_name", "{project_name}")),
-            {"project_name": str(self.project.get("project_name", ""))},
+            str(self.config.get("design_name", "{project_name}")),
+            {"project_name": str(self.config.get("project_name", ""))},
         )
 
-        # 2. resolve project.yaml（多轮迭代）
-        self._project_resolved = self._resolve_project(self.project, self._design_name)
+        # 2. resolve 整个 config.yaml（多轮迭代）
+        self._config_resolved = self._resolve_config(self.config, self._design_name)
 
-        # 3. resolve run_context.yaml
-        self._run_context_resolved = self._resolve_run_context(
-            self.run_context, self._project_resolved, self._design_name,
-        )
-
-        # 4. 启动期校验：配置里的 step 名必须是协议注册过的
+        # 3. 启动期校验：配置里的 step 名必须是协议注册过的
         self._validate_step_commands()
 
     @staticmethod
@@ -77,12 +70,12 @@ class RealECOMCPServer(ECOMCPServer):
     # ── 启动期校验 ──
 
     def _validate_step_commands(self) -> None:
-        commands = self._project_resolved.get("step_command", {})
+        commands = self._config_resolved.get("step_command", {})
 
         unknown = set(commands) - set(STEP_NAMES)
         if unknown:
             raise Exception(
-                f"project.yaml.step_command 里有未注册的 step: {sorted(unknown)}；"
+                f"config.yaml.step_command 里有未注册的 step: {sorted(unknown)}；"
                 f"合法 step: {list(STEP_NAMES)}"
             )
 
@@ -90,26 +83,32 @@ class RealECOMCPServer(ECOMCPServer):
             if isinstance(cmd, list):
                 if not cmd or any(not str(item).strip() for item in cmd):
                     raise Exception(
-                        f"project.yaml.step_command.{step_name} 是空 list 或含空命令"
+                        f"config.yaml.step_command.{step_name} 是空 list 或含空命令"
                     )
             elif not str(cmd).strip():
-                raise Exception(f"project.yaml.step_command.{step_name} 是空字符串")
+                raise Exception(f"config.yaml.step_command.{step_name} 是空字符串")
 
-        timeouts = self._project_resolved.get("timeout_s", {})
+        timeouts = self._config_resolved.get("timeout_s", {})
         for step_name, val in timeouts.items():
             if not isinstance(val, int) or val <= 0:
                 raise Exception(
-                    f"project.yaml.timeout_s.{step_name} 必须是正整数秒，实际为: {val!r}"
+                    f"config.yaml.timeout_s.{step_name} 必须是正整数秒，实际为: {val!r}"
                 )
 
-    # ── 占位符 resolve（project.yaml 内部）──
+    # ── 占位符 resolve（整个 config.yaml，多轮迭代直到稳定）──
 
-    def _resolve_project(self, project: dict, design_name: str) -> dict:
-        """Resolve project.yaml 内部的所有占位符引用（多轮迭代直到稳定）。"""
+    def _resolve_config(self, config: dict, design_name: str) -> dict:
+        """Resolve config.yaml 内部的所有占位符引用（多轮迭代直到稳定）。
+
+        合并了旧 _resolve_project + _resolve_run_context：所有字段（base/logs/
+        wait_flags/step_command + execution_dir/preco_db/preco_db_next/eco_scripts）
+        在同一个多轮循环里 resolve，依赖（如 preco_db 引用 base.run_eco_route）
+        通过多轮迭代自然解决。
+        """
         flat: dict[str, object] = {}
-        flat["project_name"] = str(project.get("project_name", ""))
-        flat["work_dir"] = str(project.get("work_dir", ""))
-        flat["project_cshrc"] = str(project.get("project_cshrc", ""))
+        flat["project_name"] = str(config.get("project_name", ""))
+        flat["work_dir"] = str(config.get("work_dir", ""))
+        flat["project_cshrc"] = str(config.get("project_cshrc", ""))
         flat["design_name"] = design_name
         # {fix_strategy} 运行时才知道，让它在 init 阶段保持原样（自引用不展开）
         flat["fix_strategy"] = "{fix_strategy}"
@@ -120,10 +119,19 @@ class RealECOMCPServer(ECOMCPServer):
         flat["wait_flags"] = {}
         flat["step_command"] = {}
 
-        base = dict(project.get("base", {}))
-        logs = dict(project.get("logs", {}))
-        wait_flags = dict(project.get("wait_flags", {}))
-        step_command = dict(project.get("step_command", {}))
+        base = dict(config.get("base", {}))
+        logs = dict(config.get("logs", {}))
+        wait_flags = dict(config.get("wait_flags", {}))
+        step_command = dict(config.get("step_command", {}))
+
+        # 运行级字段（原 run_context.yaml 的内容，现在是同一文件里的顶层 key）
+        run_keys = ("execution_dir", "preco_db", "preco_db_next", "eco_scripts")
+        run_raw: dict[str, str] = {}
+        for key in run_keys:
+            val = config.get(key)
+            if val is not None:
+                run_raw[key] = str(val)
+                flat[key] = str(val)
 
         for _ in range(10):
             changed = False
@@ -162,32 +170,20 @@ class RealECOMCPServer(ECOMCPServer):
                 step_command[k] = new_val
                 flat["step_command"][k] = new_val  # type: ignore[index]
 
+            # 运行级字段（execution_dir / preco_db / 等）
+            for key in run_keys:
+                if key in run_raw:
+                    new_val = self._resolve_one(run_raw[key], flat)
+                    if new_val != run_raw[key]:
+                        changed = True
+                        run_raw[key] = new_val
+                    flat[key] = new_val
+
             if not changed:
                 break
 
-        flat["timeout_s"] = dict(project.get("timeout_s", {}))
+        flat["timeout_s"] = dict(config.get("timeout_s", {}))
         return flat  # type: ignore[return-value]
-
-    # ── 占位符 resolve（run_context.yaml，引用 project 解析后的值）──
-
-    def _resolve_run_context(
-        self, run_context: dict, resolved_project: dict, design_name: str,
-    ) -> dict:
-        """Resolve run_context.yaml 里的 {project_name}, {base.xxx} 等占位符。"""
-        ctx_flat: dict[str, object] = {}
-        ctx_flat["project_name"] = resolved_project["project_name"]
-        ctx_flat["work_dir"] = resolved_project["work_dir"]
-        ctx_flat["base"] = resolved_project["base"]
-        ctx_flat["design_name"] = design_name
-
-        resolved: dict[str, object] = {"design_name": design_name}
-
-        for key in ("preco_db", "preco_db_next", "eco_scripts", "execution_dir"):
-            val = run_context.get(key)
-            if val:
-                resolved[key] = self._resolve_one(str(val), ctx_flat)
-
-        return resolved
 
     # ── 通用占位符替换 ──
 
@@ -233,13 +229,13 @@ class RealECOMCPServer(ECOMCPServer):
     def _resolve_execution_dir(self, step_name: str) -> str:
         """Python 侧推断 wrapper 应该 cd 到哪个目录。
 
-        优先级：run_context.execution_dir > project.base.{step_name}_bin > project.base.{step_name}
+        优先级：config.execution_dir > config.base.{step_name}_bin > config.base.{step_name}
         """
-        rc_exec = self._run_context_resolved.get("execution_dir")
-        if rc_exec and rc_exec != "":
-            return str(rc_exec)
+        exec_dir = self._config_resolved.get("execution_dir")
+        if exec_dir and exec_dir != "":
+            return str(exec_dir)
 
-        base = self._project_resolved.get("base", {})
+        base = self._config_resolved.get("base", {})
         bin_key = f"{step_name}_bin"
         if bin_key in base:
             return base[bin_key]
@@ -248,10 +244,10 @@ class RealECOMCPServer(ECOMCPServer):
 
         return ""
 
-    # ── 超时获取（project.yaml 唯一来源，未配置走兜底默认值）──
+    # ── 超时获取（config.yaml 唯一来源，未配置走兜底默认值）──
 
     def _get_timeout(self, step_name: str) -> int:
-        val = self._project_resolved.get("timeout_s", {}).get(step_name)
+        val = self._config_resolved.get("timeout_s", {}).get(step_name)
         if val is None:
             return DEFAULT_TIMEOUT_S
         return int(val)
@@ -261,10 +257,10 @@ class RealECOMCPServer(ECOMCPServer):
     def _resolve_log_dir(self, step_name: str) -> str:
         """获取 step 的日志目录，优先匹配 engine 级目录。
 
-        例：run_pt_fix_setup 在 project.logs 里可能没有直接的 key，
+        例：run_pt_fix_setup 在 config.logs 里可能没有直接的 key，
             但有 run_pt_fix = xxx/log，所以 fallback 到引擎级目录。
         """
-        logs = self._project_resolved.get("logs", {})
+        logs = self._config_resolved.get("logs", {})
 
         if step_name in logs:
             return logs[step_name]
@@ -284,7 +280,7 @@ class RealECOMCPServer(ECOMCPServer):
         """运行任意 step，wrapper 统一处理 source/逐行命令/wait。
 
         Args:
-            step_name: step 名（必须在 project.yaml.step_command 里注册）
+            step_name: step 名（必须在 config.yaml.step_command 里注册）
             fix_strategy: 可选的修复策略（替换命令里的 {fix_strategy}）
             dry_run: True → 只打印 resolve 后的命令和环境变量，不真正执行
             debug: True → wrapper 里 set -x + 打印 env dump
@@ -297,11 +293,11 @@ class RealECOMCPServer(ECOMCPServer):
         """
         if step_name not in STEP_NAMES:
             raise Exception(f"Step [{step_name}] 不是合法 step，合法值: {list(STEP_NAMES)}")
-        if step_name not in self._project_resolved.get("step_command", {}):
-            raise Exception(f"Step [{step_name}] 未在 project.yaml.step_command 里配置命令")
+        if step_name not in self._config_resolved.get("step_command", {}):
+            raise Exception(f"Step [{step_name}] 未在 config.yaml.step_command 里配置命令")
 
         # 1. 归一化成命令 list（str → 1 条；list → 多条按序执行）
-        raw_cmd = self._project_resolved["step_command"][step_name]
+        raw_cmd = self._config_resolved["step_command"][step_name]
         commands = list(raw_cmd) if isinstance(raw_cmd, list) else [raw_cmd]
 
         if fix_strategy:
@@ -312,7 +308,7 @@ class RealECOMCPServer(ECOMCPServer):
             if re.search(r"\{[^}]*\}", cmd):
                 raise Exception(
                     f"[{step_name}] 第 {idx} 条命令存在未解析的占位符: {cmd!r}；"
-                    f"请检查 project.yaml / run_context.yaml"
+                    f"请检查 config.yaml"
                 )
 
         env = self._build_env(step_name, commands, fix_strategy, debug)
@@ -374,11 +370,11 @@ class RealECOMCPServer(ECOMCPServer):
     ) -> dict:
         """组装传给 wrapper 的环境变量（继承当前进程环境，保留 IT 托底的 PATH 等）。"""
         env = os.environ.copy()
-        env["PROJECT_CSHRC"] = self._project_resolved["project_cshrc"]
+        env["PROJECT_CSHRC"] = self._config_resolved["project_cshrc"]
         env["STEP_NAME"] = step_name
-        env["DESIGN_NAME"] = self._run_context_resolved["design_name"]
+        env["DESIGN_NAME"] = self._config_resolved["design_name"]
         env["EXECUTION_DIR"] = self._resolve_execution_dir(step_name)
-        env["WAIT_FILE"] = self._project_resolved.get("wait_flags", {}).get(step_name, "")
+        env["WAIT_FILE"] = self._config_resolved.get("wait_flags", {}).get(step_name, "")
         env["LOG_DIR"] = self._resolve_log_dir(step_name)
 
         if fix_strategy:

@@ -7,16 +7,13 @@ import pytest
 from src.mcp_server.protocol import STEP_NAMES
 from src.mcp_server.real import DEFAULT_TIMEOUT_S, RealECOMCPServer
 
-from .helpers import WRAPPER_PATH, write_real_configs
+from .helpers import WRAPPER_PATH, write_config
 
 
 def _make(tmp_path, step_command: dict, **kwargs) -> RealECOMCPServer:
-    project_path, run_context_path = write_real_configs(
-        tmp_path, step_command=step_command, **kwargs,
-    )
+    config_path = write_config(tmp_path, step_command=step_command, **kwargs)
     return RealECOMCPServer(
-        project_path=str(project_path),
-        run_context_path=str(run_context_path),
+        config_path=str(config_path),
         wrapper_path=str(WRAPPER_PATH),
     )
 
@@ -24,10 +21,10 @@ def _make(tmp_path, step_command: dict, **kwargs) -> RealECOMCPServer:
 # ── 仓库自带配置 ──
 
 class TestShippedConfigs:
-    def test_shipped_project_and_run_context_load(self):
+    def test_shipped_config_loads(self):
         # cwd 是仓库根目录（pytest rootdir）
         server = RealECOMCPServer(wrapper_path=str(WRAPPER_PATH))
-        configured = set(server._project_resolved["step_command"])
+        configured = set(server._config_resolved["step_command"])
         assert configured == set(STEP_NAMES)
 
     def test_shipped_timeout_values(self):
@@ -37,7 +34,7 @@ class TestShippedConfigs:
 
     def test_shipped_commands_fully_resolved(self):
         server = RealECOMCPServer(wrapper_path=str(WRAPPER_PATH))
-        for step, cmd in server._project_resolved["step_command"].items():
+        for step, cmd in server._config_resolved["step_command"].items():
             cmds = cmd if isinstance(cmd, list) else [cmd]
             for c in cmds:
                 # 只有 fix 类允许 {fix_strategy} 留到运行时
@@ -46,12 +43,13 @@ class TestShippedConfigs:
                 assert "{base." not in c
                 assert "{design_name}" not in c
 
-    def test_shipped_run_context_resolved(self):
+    def test_shipped_run_fields_resolved(self):
         server = RealECOMCPServer(wrapper_path=str(WRAPPER_PATH))
-        rc = server._run_context_resolved
-        assert rc["design_name"] == "SOC_XXX_SUB"
-        assert rc["preco_db"].endswith("/DB/SOC_XXX_SUB_fixhold.enc")
-        assert "/2.APR.SOC_XXX_SUB" in rc["preco_db"]
+        cfg = server._config_resolved
+        assert cfg["design_name"] == "SOC_XXX_SUB"
+        assert cfg["preco_db"].endswith("/DB/SOC_XXX_SUB_fixhold.enc")
+        assert "/2.APR.SOC_XXX_SUB" in cfg["preco_db"]
+        assert cfg["execution_dir"] == cfg["base"]["run_eco_route"]
 
 
 # ── 占位符 resolve ──
@@ -60,21 +58,21 @@ class TestPlaceholderResolution:
     def test_nested_base_reference(self, tmp_path):
         # base.run_signoff = "{base.run_eco_route}" 应多轮迭代完整展开
         server = _make(tmp_path, {"run_ext": "echo x"})
-        base = server._project_resolved["base"]
+        base = server._config_resolved["base"]
         assert base["run_signoff"] == base["run_eco_route"]
         assert base["run_signoff"] == f"{tmp_path}/apr"
 
     def test_design_name_inside_step_command(self, tmp_path):
         # 回归：step_command 里的 {design_name} 旧实现会解析成空
         server = _make(tmp_path, {"run_pv": "echo {design_name}"})
-        assert server._project_resolved["step_command"]["run_pv"] == "echo TestDesign"
+        assert server._config_resolved["step_command"]["run_pv"] == "echo TestDesign"
 
     def test_sub_design_name_override(self, tmp_path):
         server = _make(
             tmp_path, {"run_pv": "echo {design_name}"}, design_name="SubBlock_A",
         )
-        assert server._project_resolved["step_command"]["run_pv"] == "echo SubBlock_A"
-        assert server._run_context_resolved["design_name"] == "SubBlock_A"
+        assert server._config_resolved["step_command"]["run_pv"] == "echo SubBlock_A"
+        assert server._config_resolved["design_name"] == "SubBlock_A"
 
     def test_fix_strategy_preserved_until_call(self, tmp_path):
         server = _make(
@@ -84,6 +82,12 @@ class TestPlaceholderResolution:
             "run_pt_fix_setup", fix_strategy="setup_via_repair", dry_run=True,
         )
         assert report["commands"] == ["pds_pteco setup_via_repair"]
+
+    def test_preco_db_resolves_base_reference(self, tmp_path):
+        # preco_db = "{base.run_eco_route}/DB/..." 应引用 base 解析后的值
+        server = _make(tmp_path, {"run_ext": "echo x"})
+        cfg = server._config_resolved
+        assert cfg["preco_db"] == f"{tmp_path}/apr/DB/TestDesign.enc"
 
 
 # ── 启动期校验 ──
@@ -128,7 +132,7 @@ class TestRunStepGuards:
     def test_step_not_configured(self, tmp_path):
         # run_sta 是合法 step，但这套临时配置里没配它的命令
         server = _make(tmp_path, {"run_ext": "echo x"})
-        with pytest.raises(Exception, match="未在 project.yaml.step_command"):
+        with pytest.raises(Exception, match="未在 config.yaml.step_command"):
             server.run_step("run_sta", dry_run=True)
 
     def test_unresolved_placeholder_raises(self, tmp_path):

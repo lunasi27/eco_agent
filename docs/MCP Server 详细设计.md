@@ -50,8 +50,7 @@ ECO Agent 的 MCP Server 子系统。作为 LangGraph Agent 与 EDA 工具之间
 │  │  ├── MockECOMCPServer                       │                             │
 │  │  │     scenario 预设数据，零依赖可调试       │                             │
 │  │  └── RealECOMCPServer                       │                             │
-│  │        ├─ config/project.yaml      加载     │                             │
-│  │        ├─ config/run_context.yaml  加载     │                             │
+│  │        ├─ config/config.yaml       加载     │                             │
 │  │        ├─ 多轮 resolve 占位符                │                             │
 │  │        ├─ 命令写入临时 CMDS_FILE             │                             │
 │  │        ├─ 组 subprocess 环境变量              │                             │
@@ -97,109 +96,69 @@ class ECOMCPServer(Protocol):
 **关键设计决策**：
 
 - **STEP_NAMES 单一注册表**：10 个 step 名集中在 `protocol.py` 的 `STEP_NAMES` tuple，配置校验、wrapper、parser 都以它为准，新增 step 先改这里。
-- **step 命名规则**：`run_{引擎}_{功能}`，如 `run_pt_fix_setup`、`run_xtop_fix_hold`。引擎（pt/xtop）编码进 step 名，不是单独配置项，避免 run_context 里配 fix_engine 这种间接层。
+- **step 命名规则**：`run_{引擎}_{功能}`，如 `run_pt_fix_setup`、`run_xtop_fix_hold`。引擎（pt/xtop）编码进 step 名，不是单独配置项，避免 config.yaml 里配 fix_engine 这种间接层。
 - **xtop_fix_setup**：XTOP 理论上也能修 setup，但目前只用它修 hold，所以只注册 `run_xtop_fix_hold`。
-- **run_dir 参数保留**：Protocol 接口必须兼容 LangGraph 的调用方式，即使 RealECOMCPServer 不从 run_dir 推断目录（从 project.yaml.base 推断），参数签名仍保持一致。
+- **run_dir 参数保留**：Protocol 接口必须兼容 LangGraph 的调用方式，即使 RealECOMCPServer 不从 run_dir 推断目录（从 config.yaml.base 推断），参数签名仍保持一致。
 
 ---
 
-## 4. 配置文件设计（2 层，按生命周期分层）
+## 4. 配置文件设计（1 个文件，按生命周期分区）
 
 ```
-修改频率 ↓     层名            文件                     内容
-─────────────────────────────────────────────────────────────────────────
-换工程才改  Layer 1  项目级配置  config/project.yaml     project_name + step_command + timeout_s
-                                                         + base + logs + wait_flags
-每次迭代改  Layer 2  运行级配置  config/run_context.yaml  design_name + execution_dir + 输入输出文件
+config/config.yaml — 一个文件，按生命周期分两部分（注释标明边界）
+
+Part 1 — 项目级（换 sub 才改）
+  project_name / work_dir / project_cshrc
+  base / logs / wait_flags / step_command / timeout_s
+
+Part 2 — 运行级（每次 ECO 迭代改）
+  design_name / execution_dir / preco_db / preco_db_next / eco_scripts
 ```
 
-**分层原则**：
+**设计原则**：
 
-- 同一语义字段只存一处，没有覆盖层级。timeout 曾经支持 run_context 覆盖，后来判断「超时随项目走，大 design 调大，不随迭代变」，于是只留 project.yaml 一处。
-- 用户配置里不出现 EDA 工具知识：日志长什么样（parse 正则）由 `src/mcp_server/parsers.py` 内置，工具升级改代码不改用户配置；工具 binary / PDK / License 由 IT 的 cshrc 与 PDS 系统托底，不进配置。
+- **每个 sub（design）一份完整 config.yaml**：实际项目中每个 sub 的 project_name、关键路径都不同，project 和 run_context 从不分离复用，合并为一个文件消除了跨文件 resolve 顺序的复杂性。
+- **同一语义字段只存一处**：timeout 只在 Part 1 存（随项目走，不随迭代变）；design_name 只在 Part 2 存（sub-design 时覆盖）。
+- 用户配置里不出现 EDA 工具知识：日志正则由 `src/mcp_server/parsers.py` 内置，工具升级改代码不改用户配置；工具 binary / PDK / License 由 IT 的 cshrc 与 PDS 系统托底。
 - 每个 step 的键集合以 `STEP_NAMES` 为准，启动期校验。
 
-### 4.1 config/project.yaml（Layer 1，换工程改一次）
-
-**职责**：项目身份 + 目录结构 + step_command 命令 + 每 step 超时 + wait_flags 完成标志 + logs 日志目录。
+### 4.1 config.yaml 结构
 
 ```yaml
+# ═══════════════════════════════════════════════════════════════════════
+# Part 1 — 项目级（换 sub 才改）
+# ═══════════════════════════════════════════════════════════════════════
+
 project_name: "SOC_XXX_SUB"
 work_dir: "/data/SDXXXX/user/w009999"
-
-# 集群调度命令（list，可多个）
-dsub_queue:
-  - "dsub -A root.xxxx.class -q lang -R 'cpu=8;mem=40000'"
-
-# IT 环境初始化脚本 — wrapper 执行前先 source
 project_cshrc: "/data/SDXXXX/common/0.c_shell/project.cshrc"
 
-# ── base — 物理工作目录（支持 {base.xxx} 链式引用，多轮 resolve）──
 base:
   run_eco_route:    "{work_dir}/2.APR.{project_name}"
-  run_ext:          "{work_dir}/3.EXT.{project_name}"
-  run_sta_bin:      "{base.run_eco_route}/tools/sta"
-  run_sta_rpt:      "/tmpdata/SDXXX_PD/user/w009999/pt_rpt"
-  run_pv:           "/tmpdata/SDXXX_PD/user/w009999/7.PV"
-  run_signoff:      "{base.run_eco_route}"          # 复用 run_eco_route 目录
-  run_pt_fix:       "{work_dir}/4.PTECO.{project_name}"
-  run_xtop_fix:     "{work_dir}/4.xtop.{project_name}"
-  dataout:          "{work_dir}/0.outgoing/{project_name}"
-
-# ── logs — 日志目录（PT/XTOP fix 是引擎级目录，多 step 共用，靠文件名区分）──
+  # ...（支持链式引用，多轮 resolve）
 logs:
   run_eco_route:    "{base.run_eco_route}/log"
-  run_ext:          "{base.run_ext}/run/LOGS"
-  run_sta:          "{base.run_sta_rpt}/{project_name}"
-  run_pv:           "{base.run_pv}/log"
-  run_signoff:      "{base.run_signoff}/log/signoff_check_*"
-  run_pt_fix:       "{base.run_pt_fix}/log"         # setup/hold/leakage/drv 共用
-  run_xtop_fix:     "{base.run_xtop_fix}/log"
-
-# ── wait_flags — 每个 step 的完成标志文件 ──
+  # ...
 wait_flags:
   run_eco_route:     "{base.dataout}/{project_name}.def.ok"
-  run_ext:           "{base.run_ext}/run/LOGS/{project_name}.spef.smc/LOG/ok.flag"
-  run_sta:           "{base.run_sta_rpt}/{project_name}/{project_name}.sta.ok"
-  run_pv:            "{base.run_pv}/log/{project_name}.pv.ok"
-  run_signoff:       "{base.run_signoff}/log/signoff_check.ok"
-  run_pt_fix_setup:  "{base.run_pt_fix}/output/fix_setup/fix_setup.tcl"
-  run_pt_fix_hold:   "{base.run_pt_fix}/output/fix_hold/fix_hold.tcl"
-  run_pt_fix_leakage:"{base.run_pt_fix}/output/fix_leakage/fix_leakage.tcl"
-  run_pt_fix_drv:    "{base.run_pt_fix}/output/fix_drv/fix_drv.tcl"
-  run_xtop_fix_hold: "{base.run_xtop_fix}/output/xtop_fix_hold.tcl"
-
-# ── step_command — 每个 step 的实际调用命令（str 或 list 两种写法）──
+  # ...
 step_command:
-  # 单条命令：字符串
   run_eco_route:        "pds_innovus 6.ecoRt"
-  run_ext:              "pds_starrc DEF_SMC"
-  run_sta:              "run_sta.csh {project_name} all CTS ptpx -input {base.dataout} -output {base.run_sta_rpt}"
-  run_pv:               "source 100P_PV.csh {design_name}"
-  run_signoff:          "pds_innovus 6-2.signoff_check"
-  run_pt_fix_setup:     "pds_pteco setup"
-  run_pt_fix_hold:      "pds_pteco hold"
-  run_pt_fix_leakage:   "pds_pteco leakage"
-  run_pt_fix_drv:       "pds_pteco ldrc"
-  run_xtop_fix_hold:    "source run_fix_hold.csh {design_name}"
-
-  # 多条命令：list，逐行执行、fail-fast（详见第 6/7 节）
-  # run_sta:
-  #   - "mkdir -p {base.run_sta_rpt}/{project_name}"
-  #   - "run_sta.csh {project_name} all CTS ptpx -input {base.dataout} -output {base.run_sta_rpt}"
-
-# ── timeout_s — 每个 step 的超时秒数（唯一存放处，未配则代码兜底 3600s）──
+  run_pv:               "source 100P_PV.csh {design_name}"   # 可用 Part 2 的 {design_name}
+  # str（单条）或 list（多条 fail-fast）
 timeout_s:
   run_eco_route:      3600
-  run_ext:            3600
-  run_sta:            7200
-  run_pv:             3600
-  run_signoff:        3600
-  run_pt_fix_setup:   3600
-  run_pt_fix_hold:    1800
-  run_pt_fix_leakage: 1800
-  run_pt_fix_drv:     1800
-  run_xtop_fix_hold:  1800
+  # ...
+
+# ═══════════════════════════════════════════════════════════════════════
+# Part 2 — 运行级（每次 ECO 迭代改）
+# ═══════════════════════════════════════════════════════════════════════
+
+design_name: "{project_name}"          # 默认等于 project_name，sub-design 时覆盖
+execution_dir: "{base.run_eco_route}"   # wrapper cd 到这里
+preco_db:      "{base.run_eco_route}/DB/{design_name}_fixhold.enc"
+preco_db_next: "{base.run_eco_route}/DB/{design_name}_fixhold_fixsetup.enc"
+eco_scripts:   "{base.run_pt_fix}/output/setup.tcl"
 ```
 
 **启动期校验**（`_validate_step_commands`，fail fast 在启动而非第一次调用）：
@@ -208,26 +167,9 @@ timeout_s:
 - step_command 为空字符串、空 list、list 里有空 item → 报错；
 - timeout 不是正整数 → 报错。
 
-### 4.2 config/run_context.yaml（Layer 2，每次迭代改）
+### 4.2 config.yaml 与 STEP_NAMES 的对齐
 
-**职责**：本轮迭代的 design 身份 + 执行目录 + 输入输出文件名。只有文件名随迭代变，目录一律引用 `{base.xxx}`。
-
-```yaml
-# Design 身份（默认等于 project_name，sub-design 时覆盖）
-design_name: "{project_name}"
-
-# wrapper 执行时 cd 到这里
-execution_dir: "{base.run_eco_route}"
-
-# 本轮 ECO 迭代的输入/输出文件
-preco_db:      "{base.run_eco_route}/DB/{design_name}_fixhold.enc"
-preco_db_next: "{base.run_eco_route}/DB/{design_name}_fixhold_fixsetup.enc"
-eco_scripts:   "{base.run_pt_fix}/output/setup.tcl"
-```
-
-### 4.3 两个 yaml 与 STEP_NAMES 的对齐
-
-`STEP_NAMES`（protocol.py）是 step 的唯一注册表，project.yaml 的 step 键必须与它对齐：
+`STEP_NAMES`（protocol.py）是 step 的唯一注册表，config.yaml 的 step 键必须与它对齐：
 
 ```python
 unknown = (cmd_steps | timeout_steps) - set(STEP_NAMES)   # 不允许出现未知 step
@@ -242,40 +184,40 @@ missing = set(STEP_NAMES) - cmd_steps                     # step_command 不允�
 
 | 占位符 | 来源 | 可用范围 |
 |---|---|---|
-| `{project_name}` | project.yaml 顶层 | 两个文件 |
-| `{work_dir}` | project.yaml 顶层 | 两个文件 |
-| `{base.xxx}` | project.yaml.base | 两个文件 |
-| `{logs.xxx}` | project.yaml.logs | 两个文件 |
-| `{wait_flags.xxx}` | project.yaml.wait_flags | 两个文件 |
-| `{step_command.xxx}` | project.yaml.step_command | 两个文件 |
-| `{design_name}` | run_context.yaml 顶层 | project.yaml（含 step_command）+ run_context |
+| `{project_name}` | config.yaml 顶层 | 整个文件 |
+| `{work_dir}` | config.yaml 顶层 | 整个文件 |
+| `{base.xxx}` | config.yaml.base | 整个文件 |
+| `{logs.xxx}` | config.yaml.logs | 整个文件 |
+| `{wait_flags.xxx}` | config.yaml.wait_flags | 整个文件 |
+| `{step_command.xxx}` | config.yaml.step_command | 整个文件 |
+| `{design_name}` | config.yaml Part 2 | 整个文件（含 Part 1 的 step_command） |
 | `{fix_strategy}` | MCP Tool 调用时传入 | step_command（运行时替换） |
 
 ### 5.2 Resolve 顺序（design_name 先行，多轮迭代直到稳定）
 
 ```
-① 加载两个 yaml，先算 design_name
-     design_name = run_context.design_name，其中 {project_name} 立即展开
-     （旧实现先 resolve project 再算 design_name，导致 step_command 里的
-      {design_name} 解析为空；v2 修正为 design_name 先行）
+① 加载 config.yaml，先算 design_name
+     design_name = resolve(config.design_name, {project_name})
+     （design_name 通常 = "{project_name}"，只依赖 project_name 立即可解）
 
-② project.yaml
-     flat = {project_name, work_dir, project_cshrc, design_name}  ← design_name 已就位
+② 整个 config.yaml 多轮迭代 resolve
+     flat = {project_name, work_dir, project_cshrc, design_name, fix_strategy}
      flat["base"] / flat["logs"] / flat["wait_flags"] / flat["step_command"] = {} 空壳
      每个字段 resolve 完立即写回 flat，多轮迭代（最多 10 轮）：
        第 1 轮：base.run_eco_route = "{work_dir}/2.APR.{project_name}"
        第 2 轮：base.run_signoff  = "{base.run_eco_route}"   ← 引用第 1 轮结果
        第 3 轮：logs / wait_flags / step_command，含 {design_name}
+       同一轮里也 resolve Part 2 的 execution_dir / preco_db 等
+       （preco_db 引用 base.run_eco_route，多轮迭代自然解决依赖）
      fix_strategy 是「自引用占位」：flat["fix_strategy"] = "{fix_strategy}"，
      resolve 时识别到引用自身则原样保留，等 run_step(fix_strategy=...) 运行时再替换
-
-③ run_context.yaml
-     ctx_flat 含 project_name / work_dir / design_name / base / logs / ...
-     resolve execution_dir、preco_db 等（漏 work_dir 会让 {work_dir} 展开为空，
-     进而错误触发 base fallback —— 这是踩过的坑）
 ```
 
-**Python 关键实现**（`RealECOMCPServer._resolve_project` / `_resolve_one`）：
+合并前（v2）需要三步：先 design_name → 再 resolve project.yaml → 最后 resolve run_context.yaml，
+中间跨文件传递 flat dict 踩过两个 bug（ctx_flat 漏 work_dir、step_command 里 {design_name} 为空）。
+合并后（v3）变成同文件内的两步，跨文件耦合整类消失。
+
+**Python 关键实现**（`RealECOMCPServer._resolve_config` / `_resolve_one`）：
 
 ```python
 for _ in range(10):
@@ -286,6 +228,7 @@ for _ in range(10):
         if new_val != str(v):
             changed = True
     # logs / wait_flags / step_command 同理
+    # Part 2 的 execution_dir / preco_db / preco_db_next / eco_scripts 也在同一循环里
     if not changed:
         break
 ```
@@ -295,7 +238,7 @@ for _ in range(10):
 ### 5.3 Resolve 示例
 
 ```yaml
-# project.yaml
+# config.yaml
 base:
   run_eco_route: "{work_dir}/2.APR.{project_name}"       # 第 1 轮 resolve
   run_signoff:   "{base.run_eco_route}"                  # 第 2 轮引用第 1 轮结果
@@ -367,10 +310,9 @@ RealECOMCPServer.run_step("run_sta")
 ### 6.2 Execution_dir 推断优先级
 
 ```
-run_context.execution_dir  >  project.base.{step_name}_bin  >  project.base.{step_name}  >  ""
-```
+config.execution_dir  >  config.base.{step_name}_bin  >  config.base.{step_name}  >  ""
 
-例：run_sta 优先 run_context.execution_dir，没配则用 base.run_sta_bin（脚本入口），再没则用 base.run_sta（报告目录）。
+例：run_sta 优先 config.execution_dir（Part 2），没配则用 base.run_sta_bin（脚本入口），再没则用 base.run_sta（报告目录）。
 
 ### 6.3 Log_dir 推断（引擎级 fallback）
 
@@ -439,10 +381,10 @@ step_command 支持 str（单条）和 list（多条）。多条命令最初考�
 |---|---|---|---|
 | `STEP_NAME` | ✅ | step 名（如 run_sta） | 日志标签、post_check 钩子命名 |
 | `CMDS_FILE` | ✅ | Python 写的临时命令文件路径 | 每行一条命令，wrapper 逐行 eval |
-| `PROJECT_CSHRC` | 建议 | project.yaml.project_cshrc | IT 环境初始化脚本，wrapper source |
-| `DESIGN_NAME` | ❌ | run_context.design_name | 传递给 PDS 命令（空则兜底） |
-| `EXECUTION_DIR` | ❌ | base 推断 / run_context.execution_dir | wrapper cd 到这里 |
-| `WAIT_FILE` | ❌ | project.yaml.wait_flags | pds_wait_files 检查的完成标志 |
+| `PROJECT_CSHRC` | 建议 | config.yaml.project_cshrc | IT 环境初始化脚本，wrapper source |
+| `DESIGN_NAME` | ❌ | config.yaml Part 2 design_name | 传递给 PDS 命令（空则兜底） |
+| `EXECUTION_DIR` | ❌ | config.execution_dir / base 推断 | wrapper cd 到这里 |
+| `WAIT_FILE` | ❌ | config.yaml.wait_flags | pds_wait_files 检查的完成标志 |
 | `LOG_DIR` | ❌ | logs 推断 | 同时输出到终端和文件 |
 | `FIX_STRATEGY` | ❌ | MCP Tool 调用时传入 | fix 类 step 专用 |
 | `DEBUG` | ❌ | RealECOMCPServer(debug=True) | set -x + env dump |
@@ -547,12 +489,11 @@ async def main():
 ECO_BACKEND=mock python -m src.mcp_server.stdio_runner              # 默认 Mock
 
 ECO_BACKEND=real \
-  PROJECT_CONFIG=config/project.yaml \
-  RUN_CONTEXT=config/run_context.yaml \
+  ECO_CONFIG=config/config.yaml \
   python -m src.mcp_server.stdio_runner
 ```
 
-2 个环境变量覆盖默认 yaml 路径，方便不同项目复用同一套代码。Shell 启动脚本 `scripts/start_real.sh` 等价封装（`-p/--project-config`、`-c/--run-context`），启动前对两个文件做存在性检查。
+`ECO_CONFIG` 环境变量覆盖默认 yaml 路径，方便不同项目复用同一套代码。Shell 启动脚本 `scripts/start_real.sh` 等价封装（`-c/--config`），启动前对配置文件做存在性检查。
 
 另有 `ECO_CSH_BIN` 环境变量可覆盖 wrapper 使用的 csh 解释器（默认 `/bin/csh`），主要给没有 `/bin/csh` 的开发/CI 环境跑集成测试用。
 
@@ -564,3 +505,4 @@ ECO_BACKEND=real \
 |---|---|---|
 | v1 | 2026-09-14 | 初始版本。3 yaml 分层 + wrapper 方案，10 个 step 注册完成 |
 | v2 | 2026-09-15 | 配置收敛为 2 yaml：删除 `config/eda_tools.yaml`，timeout_s 并入 `project.yaml`（唯一存放处，取消 run_context 覆盖），parse_patterns 收进内置 `src/mcp_server/parsers.py`。step_command 支持 str/list，多命令经临时 `CMDS_FILE` 逐行 eval + fail-fast（替换单 `$CMD` 环境变量）。修复 resolve 顺序：design_name 先于 project.yaml 解析（旧实现 step_command 中 `{design_name}` 为空）。wrapper 经传统 BSD csh 集成测试验证（修复 `$?X &&` 非短路、`$(pwd)` 非 csh 语法、tee 吞退出码三个问题）。 |
+| v3 | 2026-09-15 | 配置合并为 1 yaml：`project.yaml` + `run_context.yaml` 合并为 `config/config.yaml`（Part 1 项目级 + Part 2 运行级，注释分区）。`_resolve_project` + `_resolve_run_context` 合并为 `_resolve_config`，消除跨文件 flat dict 传递。启动入口 `PROJECT_CONFIG` + `RUN_CONTEXT` → `ECO_CONFIG`。动机：每个 sub 的配置 1:1 成套出现从不分离复用，合并后 resolve 从三步变两步，跨文件耦合 bug 整类消失。 |

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from .helpers import WRAPPER_PATH, write_real_configs
+from .helpers import WRAPPER_PATH, write_config
 
 
 @pytest.fixture
@@ -13,12 +13,9 @@ def make_server(tmp_path):
     from src.mcp_server.real import RealECOMCPServer
 
     def _make(step_command: dict, **kwargs) -> RealECOMCPServer:
-        project_path, run_context_path = write_real_configs(
-            tmp_path, step_command=step_command, **kwargs,
-        )
+        config_path = write_config(tmp_path, step_command=step_command, **kwargs)
         return RealECOMCPServer(
-            project_path=str(project_path),
-            run_context_path=str(run_context_path),
+            config_path=str(config_path),
             wrapper_path=str(WRAPPER_PATH),
         )
 

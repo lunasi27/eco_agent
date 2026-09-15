@@ -1,12 +1,20 @@
-# config/project.yaml
-# 项目级配置 — 换工程时改一次，工程内不动
+# config/config.yaml
+# ECO Agent 配置 — 每个 sub（design）一份完整配置
 #
-# 占位符变量规则（Python 侧 resolve）：
+# 文件内按生命周期分两部分（注释标明边界，物理上是一个文件）：
+#   Part 1 — 项目级：换 sub 才改（project_name / base / logs / step_command / timeout_s）
+#   Part 2 — 运行级：每次 ECO 迭代改（design_name / execution_dir / 输入输出文件）
+#
+# 占位符变量规则（Python 侧 resolve，多轮迭代直到全部展开）：
 #   - {project_name}   本文件 project_name 字段
 #   - {work_dir}       本文件 work_dir 字段
-#   - {design_name}    run_context.design_name（先于本文件解析，step_command 里可直接用）
+#   - {design_name}    本文件 design_name 字段（先于其他字段解析，step_command 里可直接用）
 #   - {fix_strategy}   MCP Tool 调用时传入（仅 fix 类 step 的命令里使用）
 #   - {base.xxx}       base 字典里的值（支持链式引用，多轮迭代直到全部展开）
+
+# ═══════════════════════════════════════════════════════════════════════
+# Part 1 — 项目级（换 sub 才改）
+# ═══════════════════════════════════════════════════════════════════════
 
 # ── 项目身份 ──
 project_name: "SOC_XXX_SUB"
@@ -94,3 +102,21 @@ timeout_s:
   run_pt_fix_leakage: 1800
   run_pt_fix_drv:     1800
   run_xtop_fix_hold:  1800
+
+# ═══════════════════════════════════════════════════════════════════════
+# Part 2 — 运行级（每次 ECO 迭代改）
+# ═══════════════════════════════════════════════════════════════════════
+
+# ── Design 身份 ──
+# 默认等于 project_name，sub-design 时覆盖
+design_name: "{project_name}"
+
+# ── 本轮迭代的执行目录 ──
+# wrapper 会 cd 到这里执行命令
+execution_dir: "{base.run_eco_route}"
+
+# ── 本轮 ECO 迭代的输入/输出文件 ──
+# 目录引用 base，只有文件名每次迭代变
+preco_db:      "{base.run_eco_route}/DB/{design_name}_fixhold.enc"
+preco_db_next: "{base.run_eco_route}/DB/{design_name}_fixhold_fixsetup.enc"
+eco_scripts:   "{base.run_pt_fix}/output/setup.tcl"

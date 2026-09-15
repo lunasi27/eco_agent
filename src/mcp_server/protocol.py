@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 # 10 个 step 的唯一注册表（单一事实源）：
-# project.yaml.step_command 的键必须是这里的子集；
+# config.yaml.step_command 的键必须是这里的子集；
 # mcp_app.py 的 @tool 注册与这里一一对应。
 STEP_NAMES: tuple[str, ...] = (
     "run_eco_route",

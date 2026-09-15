@@ -73,6 +73,7 @@ def _in_conversation(state) -> bool:
 
 HELP_TEXT = """可用命令：
   /help                显示本帮助
+  /init [工作目录]     扫描 EDA 目录，生成 eco_agent/config.yaml
   /status              当前会话状态（阶段/步骤/违例数）
   /run_eco <design名>  直接指定 design 开始跑 ECO 流水线
   /sessions            列出所有已保存的会话
@@ -188,6 +189,10 @@ def dispatch(user_input: str, graph, config: dict, state) -> CommandResult:
 
     if name in ("/help", "/?"):
         print(HELP_TEXT)
+        return CommandResult(action="handled")
+    if name == "/init":
+        from src.calling_layer.init_command import run_init
+        print(run_init(" ".join(args) if args else ""))
         return CommandResult(action="handled")
     if name == "/status":
         _print_status(graph, config, state)

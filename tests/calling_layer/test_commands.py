@@ -42,7 +42,9 @@ class TestBasicCommands:
         state = _conversation_state(g, cfg)
 
         assert dispatch("/help", g, cfg, state).action == "handled"
-        assert "/run_eco" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "/init" in out
+        assert "/run_eco" in out
 
         assert dispatch("/nope", g, cfg, state).action == "handled"
         assert "未知命令" in capsys.readouterr().out

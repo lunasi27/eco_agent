@@ -12,8 +12,7 @@ async def main():
     if backend == "real":
         from src.mcp_server.real import RealECOMCPServer
         eco_server = RealECOMCPServer(
-            project_path=os.environ.get("PROJECT_CONFIG", "config/project.yaml"),
-            run_context_path=os.environ.get("RUN_CONTEXT", "config/run_context.yaml"),
+            config_path=os.environ.get("ECO_CONFIG", "config/config.yaml"),
         )
     else:
         from src.mcp_server.mock import MockECOMCPServer

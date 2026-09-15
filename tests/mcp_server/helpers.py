@@ -1,4 +1,4 @@
-"""mcp_server 测试公共工具：在 tmp_path 下构造 project.yaml + run_context.yaml。"""
+"""mcp_server 测试公共工具：在 tmp_path 下构造 config.yaml。"""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def resolve_csh_bin() -> str | None:
     return None
 
 
-def write_real_configs(
+def write_config(
     base_dir: Path,
     *,
     step_command: dict,
@@ -29,9 +29,9 @@ def write_real_configs(
     wait_flags: dict | None = None,
     design_name: str | None = None,
     project_name: str = "TestDesign",
-) -> tuple[Path, Path]:
-    """在 base_dir 下写一套最小可用的 project.yaml + run_context.yaml。"""
-    project: dict = {
+) -> Path:
+    """在 base_dir 下写一套最小可用的 config.yaml。"""
+    config: dict = {
         "project_name": project_name,
         "work_dir": str(base_dir),
         "project_cshrc": "",
@@ -51,18 +51,15 @@ def write_real_configs(
         "step_command": step_command,
     }
     if timeout_s is not None:
-        project["timeout_s"] = timeout_s
+        config["timeout_s"] = timeout_s
 
-    run_context = {
-        "design_name": design_name or "{project_name}",
-        "execution_dir": "{work_dir}",
-        "preco_db": "{base.run_eco_route}/DB/{design_name}.enc",
-        "preco_db_next": "{base.run_eco_route}/DB/{design_name}_next.enc",
-        "eco_scripts": "{base.run_pt_fix}/output/setup.tcl",
-    }
+    # Part 2 — 运行级
+    config["design_name"] = design_name or "{project_name}"
+    config["execution_dir"] = "{work_dir}"
+    config["preco_db"] = "{base.run_eco_route}/DB/{design_name}.enc"
+    config["preco_db_next"] = "{base.run_eco_route}/DB/{design_name}_next.enc"
+    config["eco_scripts"] = "{base.run_pt_fix}/output/setup.tcl"
 
-    project_path = base_dir / "project.yaml"
-    run_context_path = base_dir / "run_context.yaml"
-    project_path.write_text(yaml.safe_dump(project, sort_keys=False))
-    run_context_path.write_text(yaml.safe_dump(run_context, sort_keys=False))
-    return project_path, run_context_path
+    config_path = base_dir / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+    return config_path

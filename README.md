@@ -250,6 +250,35 @@ ECO Agent 内置一个完整的 MCP (Model Context Protocol) Server，将 ECO �
 
 > 完整架构、配置文件设计、占位符 Resolve、Wrapper 脚本机制 → 详见 [docs/MCP Server 详细设计.md](docs/MCP%20Server%20详细设计.md)
 
+### `/init` — 快速生成 Real 模式配置
+
+在交互式会话中输入 `/init` 可自动扫描 EDA 工作目录，在 `{work_dir}/eco_agent/` 下生成 `config.yaml`：
+
+```
+> /init /data/SDXXXX/user/w009999
+
+✅ 配置已生成: /data/SDXXXX/user/w009999/eco_agent/config.yaml
+
+  project_name : SOC_XXX_SUB
+  work_dir     : /data/SDXXXX/user/w009999
+  project_cshrc: /data/SDXXXX/common/0.c_shell/project.cshrc
+
+  扫描到的目录：
+    APR    → /data/SDXXXX/user/w009999/2.APR.SOC_XXX_SUB
+    EXT    → /data/SDXXXX/user/w009999/3.EXT.SOC_XXX_SUB
+    ...
+
+  ⚠ 需手动填写：
+    base.run_sta_rpt   STA 报告目录（跨盘路径）
+    base.run_pv        PV 目录（跨盘路径）
+    dsub_queue         集群调度参数
+
+  启动 Real 模式：
+    ECO_CONFIG=/data/.../eco_agent/config.yaml ECO_BACKEND=real python -m src.mcp_server.stdio_runner
+```
+
+不带参数时扫描当前工作目录。已有 `config.yaml` 会自动备份为 `.bak`。
+
 ### 启动方式
 
 ```bash
@@ -259,15 +288,13 @@ ECO_BACKEND=mock python -m src.mcp_server.stdio_runner
 # 指定 scenario
 ECO_BACKEND=mock ECO_SCENARIO=phase2_sta_error python -m src.mcp_server.stdio_runner
 
-# Real 模式 — 接入真实 EDA，2 个配置文件路径可独立指定
-#   config/project.yaml     项目级：step 命令 / timeout / 路径（换工程改一次）
-#   config/run_context.yaml 运行级：design / 迭代目录 / db（每次迭代改）
+# Real 模式 — 接入真实 EDA，1 个配置文件
+#   config/config.yaml  完整配置（Part 1 项目级 + Part 2 运行级）
 ECO_BACKEND=real \
-  PROJECT_CONFIG=config/project.yaml \
-  RUN_CONTEXT=config/run_context.yaml \
+  ECO_CONFIG=config/config.yaml \
   python -m src.mcp_server.stdio_runner
 
-# 也可以直接用启动脚本（等价参数：-p / -c）
+# 也可以直接用启动脚本（等价参数：-c）
 scripts/start_real.sh
 
 # 用 MCP Inspector 交互式调试（浏览器里能看到所有 10 个 Tool + 参数说明 + 返回值）
@@ -277,7 +304,7 @@ npx @modelcontextprotocol/inspector
 
 ### Dry-run 模式（快速验证配置）
 
-在调用 RealECOMCPServer.run_step 时加 `dry_run=True`，只打印 resolve 后的完整环境变量和命令，不真正执行。`step_command` 支持字符串（一条命令）或列表（多条命令逐条执行、失败即停）：
+在调用 RealECOMCPServer.run_step 时加 `dry_run=True`，只打印 resolve 后的完整环境变量和命令，不真正执行。`config.yaml` 里 `step_command` 支持字符串（一条命令）或列表（多条命令逐条执行、失败即停）：
 
 ```bash
 python -c "
@@ -306,11 +333,8 @@ srv.run_step('run_sta', dry_run=True)
 ```python
 from src.mcp_server.real import RealECOMCPServer
 
-srv = RealECOMCPServer()                              # 用默认 2 个 yaml 路径
-srv = RealECOMCPServer(
-    project_path="config/project.yaml",
-    run_context_path="config/run_context.yaml",
-)
+srv = RealECOMCPServer()                              # 用默认 config/config.yaml
+srv = RealECOMCPServer(config_path="config/config.yaml")
 
 # dry-run（只看 resolve 结果，不真正执行）
 srv.run_step("run_sta", dry_run=True)
@@ -379,8 +403,7 @@ eco_agent/
 ├── config/
 │   ├── default.yaml              # 默认配置（LangGraph + 框架级）
 │   ├── production.yaml           # 生产环境配置（严格校验）
-│   ├── project.yaml              # MCP Server 项目级配置（step 命令/timeout/路径，换工程改）
-│   └── run_context.yaml          # MCP Server 运行级配置（design/迭代目录/db，每次迭代改）
+│   ├── config.yaml               # MCP Server 完整配置（Part 1 项目级 + Part 2 运行级）
 ├── src/
 │   ├── main.py                   # CLI 入口
 │   ├── graph_builder.py          # LangGraph 图构建（注册所有节点和边）
@@ -402,7 +425,7 @@ eco_agent/
 │   ├── mcp_server/
 │   │   ├── protocol.py           # ECOMCPServer Protocol 接口契约 + STEP_NAMES 注册表
 │   │   ├── mock.py               # MockECOMCPServer 实现（7 个 scenario）
-│   │   ├── real.py               # RealECOMCPServer 实现（读 2 个 yaml + wrapper）
+│   │   ├── real.py               # RealECOMCPServer 实现（读 1 个 yaml + wrapper）
 │   │   ├── parsers.py            # 内置 EDA 日志 parse patterns（用户无需配置）
 │   │   ├── mcp_app.py            # FastMCP 注册 10 个 @tool()
 │   │   └── stdio_runner.py       # stdio Transport 启动入口
@@ -411,6 +434,8 @@ eco_agent/
 │   │   └── agent.py              # agent_entry LLM 对话节点
 │   │
 │   ├── calling_layer/
+│   │   ├── commands.py           # /help /status /run_eco /init /sessions /resume /new /exit
+│   │   ├── init_command.py       # /init：扫描 EDA 目录 → 生成 eco_agent/config.yaml
 │   │   ├── event_loop.py         # 交互式 event_loop（stream → get_state → input）
 │   │   └── formatters.py         # 事件/中断/终态格式化输出
 │   │
@@ -535,10 +560,10 @@ python -W error::ResourceWarning -m pytest tests/
 
 | 方向 | 当前状态 | 说明 |
 |---|---|---|
-| `run_fix_leakage` | ✅ 已接入 | RealECOMCPServer + wrapper + project.yaml.step_command，与其他 fix 类 step 统一 |
+| `run_fix_leakage` | ✅ 已接入 | RealECOMCPServer + wrapper + config.yaml.step_command，与其他 fix 类 step 统一 |
 | `run_pt_fix_drv` | ✅ 已接入 | PT 引擎 DRV 修复，新增的第 9 个 step |
 | `run_xtop_fix_hold` | ✅ 已接入 | XTOP 引擎 hold 修复，第 10 个 step，与 PT fix 并行的引擎选择 |
-| 真实 EDA 接入 | ✅ 已就绪 | RealECOMCPServer 读 2 个 yaml → wrapper 执行 cshell/PDS 命令，只需填充真实路径和 step_command |
+| 真实 EDA 接入 | ✅ 已就绪 | RealECOMCPServer 读 1 个 yaml → wrapper 执行 cshell/PDS 命令，只需填充真实路径和 step_command |
 | CLI 重构 | 📍 原型 | 当前 argparse 实现，后续可升级为 Typer 增加 `config list` / `thread resume` 等子命令 |
 | LLM Gateway | 📍 agent_entry 已集成 | 可扩展为多 LLM 路由（不同意图用不同模型） |
 | 指标/监控 | 📍 step_elapsed 已采集 | 接入 Prometheus / Grafana 展示流水线耗时 |

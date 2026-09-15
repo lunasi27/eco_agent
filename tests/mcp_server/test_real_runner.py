@@ -99,7 +99,7 @@ def test_multi_command_all_success(make_server):
 
 
 def test_design_name_placeholder_in_step_command(make_server, tmp_path):
-    # 回归：{design_name} 在 project.yaml.step_command 里必须正确展开（旧实现会解析成空）
+    # 回归：{design_name} 在 config.yaml.step_command 里必须正确展开（旧实现会解析成空）
     server = make_server(
         {"run_pv": "echo DESIGN_VALUE={design_name}"},
         timeout_s={"run_pv": 5},
