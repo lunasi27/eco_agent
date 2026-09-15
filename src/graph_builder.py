@@ -171,7 +171,12 @@ def build_graph(
     builder.add_conditional_edges("init", route_after_init)
     builder.add_conditional_edges("run_eco_route", route_after_run_eco_route)
 
-    builder.add_edge("finalize", END)
+    # 对话模式：finalize 完成后回到 chat_fallback 继续对话（不结束进程）
+    # 非交互模式（skip_agent_entry）：直接 END
+    if skip_agent_entry:
+        builder.add_edge("finalize", END)
+    else:
+        builder.add_edge("finalize", "chat_fallback")
     # 对话自环：chat_fallback 解析出 design → init；否则回到本节点继续对话。
     # 每轮对话都是一个全新任务，避免同一任务内重复 interrupt 的恢复陷阱
     builder.add_conditional_edges("chat_fallback", route_from_chat)

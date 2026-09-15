@@ -25,7 +25,7 @@ def sqlite_ctx():
             _conns.append(conn)
             saver = SqliteSaver(conn)
             mcp = MockECOMCPServer(scenario=scenario, simulate_delay=0)
-            return build_graph(mcp_server=mcp, checkpointer=saver)
+            return build_graph(mcp_server=mcp, checkpointer=saver, skip_agent_entry=True)
 
         try:
             yield db_path, _make_graph

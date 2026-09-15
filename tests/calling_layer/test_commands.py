@@ -107,19 +107,24 @@ class TestResumeCommand:
         assert "找不到会话" in capsys.readouterr().out
 
     def test_resume_rejects_completed_session(self, capsys):
+        # 已完成会话需要用 skip_agent_entry=True 的图（finalize → END）
+        g_done = build_graph(
+            mcp_server=MockECOMCPServer(scenario="happy_path", simulate_delay=0),
+            checkpointer=MemorySaver(),
+            skip_agent_entry=True,
+        )
         g = _make_graph()
         cfg = {"configurable": {"thread_id": _fresh_thread_id("cmd_rs2")}}
         state = _conversation_state(g, cfg)
 
         # 造一个已完成的会话
         done_cfg = {"configurable": {"thread_id": _fresh_thread_id("cmd_done")}}
-        list(g.stream({"design_name": "d"}, done_cfg))
-        # happy_path 停在中断，跑完它
+        list(g_done.stream({"design_name": "d"}, done_cfg))
         from langgraph.types import Command
-        list(g.stream(Command(resume="setup"), done_cfg))
-        list(g.stream(Command(resume="stop"), done_cfg))
+        list(g_done.stream(Command(resume="setup"), done_cfg))
+        list(g_done.stream(Command(resume="stop"), done_cfg))
 
-        result = dispatch(f"/resume {done_cfg['configurable']['thread_id']}", g, cfg, state)
+        result = dispatch(f"/resume {done_cfg['configurable']['thread_id']}", g_done, cfg, state)
         assert result.action == "handled"
         assert "已正常结束" in capsys.readouterr().out
 

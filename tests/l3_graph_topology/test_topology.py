@@ -14,13 +14,13 @@ from src.mcp_server.mock import MockECOMCPServer
 @pytest.fixture
 def graph_happy():
     mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
-    return build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+    return build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
 
 
 @pytest.fixture
 def graph_conv():
     mcp = MockECOMCPServer(scenario="convergence", simulate_delay=0)
-    return build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+    return build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
 
 
 @pytest.fixture
@@ -204,8 +204,11 @@ class TestFullTopologyRegistration:
         "error_handler", "finalize", "chat_fallback",
     }
 
-    def test_all_expected_nodes_registered(self, graph_happy):
-        registered = {k for k in graph_happy.nodes.keys() if not k.startswith("__")}
+    def test_all_expected_nodes_registered(self):
+        # 完整拓扑需包含 agent_entry（对话模式），故不跳过 agent_entry
+        mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=False)
+        registered = {k for k in g.nodes.keys() if not k.startswith("__")}
         missing = self.EXPECTED_NODES - registered
         extra = registered - self.EXPECTED_NODES
         assert not missing and not extra, (

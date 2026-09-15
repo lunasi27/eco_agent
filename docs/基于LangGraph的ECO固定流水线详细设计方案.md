@@ -70,8 +70,8 @@
 │  │                         └─ 异常 → Error Handler      │  │
 │  │                                                     │  │
 │  │  Phase3（分支 step，根据修复策略选一种执行）:         │  │
-│  │    interrupt 恢复后，用户输入 setup → run_fix_setup   │  │
-│  │                       用户输入 hold  → run_fix_hold   │  │
+│  │    interrupt 恢复后，用户输入 setup → run_pt_fix_setup   │  │
+│  │                       用户输入 hold  → run_pt_fix_hold   │  │
 │  │    → phase3_summary → interrupt(中断2)               │  │
 │  │                                                     │  │
 │  │  迭代决策:                                           │  │
@@ -536,36 +536,36 @@ Phase2 汇总节点（`phase2_summary`）恢复执行完后，条件边根据 `u
 def route_after_phase2_summary(state: ECOState):
     strategy = state["user_fix_strategy"]
     if strategy == "setup":
-        return "run_fix_setup"
+        return "run_pt_fix_setup"
     elif strategy == "hold":
-        return "run_fix_hold"
+        return "run_pt_fix_hold"
     # elif strategy == "leakage":  # 后续按需加
-    #     return "run_fix_leakage"
+    #     return "run_pt_fix_leakage"
     else:
         return "error_handler"  # strategy 非法时走 Error Handler
 ```
 
 #### 分支 Step 节点
 
-**node\_run\_fix\_setup**：调用 MCP API `run_fix_setup`
+**node\_run\_fix\_setup**：调用 MCP API `run_pt_fix_setup`
 
 ```python
-def node_run_fix_setup(state: ECOState):
-    return _run_step(state, "run_fix_setup", "phase3",
+def node_run_pt_fix_setup(state: ECOState):
+    return _run_step(state, "run_pt_fix_setup", "phase3",
                      result_keys=["setup_vio"],
                      extra_params={"fix_strategy": state["user_fix_strategy"]})
 ```
 
-**node\_run\_fix\_hold**：调用 MCP API `run_fix_hold`
+**node\_run\_fix\_hold**：调用 MCP API `run_pt_fix_hold`
 
 ```python
-def node_run_fix_hold(state: ECOState):
-    return _run_step(state, "run_fix_hold", "phase3",
+def node_run_pt_fix_hold(state: ECOState):
+    return _run_step(state, "run_pt_fix_hold", "phase3",
                      result_keys=["hold_vio"],
                      extra_params={"fix_strategy": state["user_fix_strategy"]})
 ```
 
-（`run_fix_leakage` 后续按需加，同样模式）
+（`run_pt_fix_leakage` 后续按需加，同样模式）
 
 #### node\_phase3\_summary（Phase3 汇总 + 中断2）
 
@@ -606,7 +606,7 @@ def route_after_phase3_summary(state: ECOState):
 
 ### 4.5 统一辅助函数 `_run_step`
 
-所有 Step 节点（`run_eco_route`、`run_sta`、`run_fix_setup`...）使用同一个辅助函数，避免重复的 try-except 逻辑：
+所有 Step 节点（`run_eco_route`、`run_sta`、`run_pt_fix_setup`...）使用同一个辅助函数，避免重复的 try-except 逻辑：
 
 ```python
 def _run_step(state: ECOState, step_name: str, phase_name: str,
@@ -733,17 +733,17 @@ Error Handler 节点**不自己发现错误**，它依赖上游 `_run_step` 已�
 ───────────────────────────────────────────────
 调用层：graph.stream({"messages": [HumanMessage(...)]}, config)
   ↓
-图执行：agent 节点 → 分流条件边 → 匹配 ECO 关键字 → 走 ECO 固定路径
+图执行：agent_entry 节点 → LLM/规则意图识别 → 匹配 ECO 意图 → 走 ECO 固定路径
   ↓
   Init → run_eco_route → run_ext（Phase1 串行）
   ↓
-  route_after_phase1：run_ext done → Send 同时发三个节点
+  route_after_run_ext：run_ext done → Send 同时发三个节点
   ↓
   并行执行：run_sta ←→ run_pv ←→ run_signoff
   ↓
   三个全部完成 → phase2_summary 汇总 → interrupt()
   ↓
-调用层：展示 Phase2 报告 + 对比 → input() 等用户输入
+调用层：展示 Phase2 报告 + 对比 → slash 命令子循环（/help /status 等，图保持挂起）或直接输入策略
 用户输入："优先修复 Hold"
 调用层：Command(resume="hold")
   ↓
@@ -751,11 +751,11 @@ Error Handler 节点**不自己发现错误**，它依赖上游 `_run_step` 已�
 ───────────────────────────────────────────────
 phase2_summary 恢复执行 → phase_status["phase2"] = "done"
   ↓
-route_after_phase2_summary：user_fix_strategy="hold" → run_fix_hold
+route_after_phase2_summary：user_fix_strategy="hold" → run_pt_fix_hold
   ↓
-run_fix_hold → phase3_summary → interrupt()
+run_pt_fix_hold → phase3_summary → interrupt()
   ↓
-调用层：展示修复结果 → input() 等用户输入
+调用层：展示修复结果 → slash 命令子循环 → input() 等用户输入
 用户输入："continue"
 调用层：Command(resume="continue")
   ↓
@@ -767,6 +767,11 @@ route_after_phase3_summary：user_iter_choice="continue" → goto "init"
   ↓
 init（iteration_cnt 自增，重置 phase_status/step_status）→ run_eco_route → ...（新一轮）
 ```
+
+> **实现备注**：
+> - Phase3 Step 命名从设计文档的 `run_pt_fix_setup` / `run_pt_fix_hold` / `run_pt_fix_leakage` 演进为 `run_pt_fix_setup` / `run_pt_fix_hold` / `run_pt_fix_leakage`，并新增 `run_pt_fix_drv` / `run_xtop_fix_hold`（共 10 个 Step，见 `STEP_NAMES`）。
+> - Mock/Real 切换从设计文档的 `USE_REAL_MCP` 演进为 `ECO_BACKEND` 环境变量。
+> - 调用层在 interrupt 期间支持 slash 命令子循环（`/help` `/init` `/status` `/run_eco` `/sessions` `/resume` `/new` `/exit`），图保持挂起状态。
 
 #### 三种中断的恢复方式对比
 
@@ -956,11 +961,14 @@ LangGraph 的官方行为：**当节点内调用** **`interrupt()`** **后，恢
 > ⚠️ **与原设计的架构差异**（开发过程中迭代引入，详见本文档末尾"架构演进"章节）：
 >
 > - State 从 18 字段扩展到 23 字段 + Annotated reducers
-> - agent\_entry 为正式入口（意图识别从 Init 中分离）
+> - agent\_entry 为正式入口（意图识别从 Init 中分离，LLM/规则双重路径）
 > - Phase2/Phase3 之间加入 Gate 汇聚节点（解决 Send 并行 race）
 > - Error Handler 路由下沉到节点内部（Command(goto)，不注册条件边）
 > - Phase2 并行错误：任意 Step error 都阻断（方案 A，无警告级）
 > - Send 并行用共享字段白名单
+> - Phase3 Step 命名演进：`run_fix_*` → `run_pt_fix_*`，新增 `run_pt_fix_drv` / `run_xtop_fix_hold`（10 个 Step）
+> - Mock/Real 切换：`USE_REAL_MCP` → `ECO_BACKEND` 环境变量
+> - 调用层在 interrupt 期间支持 slash 命令子循环（`/init` `/status` `/help` 等，图保持挂起）
 
 ```python
 from langgraph.graph import StateGraph, Send, END
@@ -1026,7 +1034,7 @@ _PHASE2_SHARED_KEYS = (
 VALID_STEP_TARGETS = {
     "run_eco_route", "run_ext",
     "run_sta", "run_pv", "run_signoff",
-    "run_fix_setup", "run_fix_hold", "run_fix_leakage",
+    "run_pt_fix_setup", "run_pt_fix_hold", "run_pt_fix_leakage",
 }
 
 
@@ -1164,7 +1172,7 @@ def make_phase3_gate_node(all_possible_steps):
 def node_phase2_gate(state):
     return make_phase2_gate_node(("run_sta", "run_pv", "run_signoff"))(state)
 def node_phase3_gate(state):
-    return make_phase3_gate_node(("run_fix_setup", "run_fix_hold", "run_fix_leakage"))(state)
+    return make_phase3_gate_node(("run_pt_fix_setup", "run_pt_fix_hold", "run_pt_fix_leakage"))(state)
 
 
 # ============ 7. Error Handler（★ 路由下沉到节点内部）============
@@ -1225,7 +1233,7 @@ _DEFAULT_PIPELINE = {
     "phases": {
         "phase1": {"steps": ["run_eco_route", "run_ext"], "type": "serial"},
         "phase2": {"steps": ["run_sta", "run_pv", "run_signoff"], "type": "parallel", "error_policy": "all_block"},
-        "phase3": {"steps": ["run_fix_setup", "run_fix_hold", "run_fix_leakage"], "type": "branch", "router": "user_choice"},
+        "phase3": {"steps": ["run_pt_fix_setup", "run_pt_fix_hold", "run_pt_fix_leakage"], "type": "branch", "router": "user_choice"},
     },
 }
 
@@ -1235,8 +1243,8 @@ _PHASE2_STEP_RESULT_KEYS = {
     "run_signoff": ["signoff_pass"],
 }
 _PHASE3_STEP_RESULT_KEYS = {
-    "run_fix_setup": ["setup_vio"],
-    "run_fix_hold": ["hold_vio"],
+    "run_pt_fix_setup": ["setup_vio"],
+    "run_pt_fix_hold": ["hold_vio"],
 }
 
 
@@ -1495,10 +1503,10 @@ MCP Server 只做**EDA 原子执行 + 摘要提取**，定在不可再分的 Ste
 | `run_sta`       | STA           | Phase2 并行 | `design_name`, `run_dir`                 | `{"setup_vio": int, "hold_vio": int}`        | 调用 PT STA，解析 timing\_report 提取 setup/hold 违例数量，原始 report 落磁盘，返回摘要          |
 | `run_pv`        | PV            | Phase2 并行 | `design_name`, `run_dir`                 | `{"pv_pass": bool}`                          | 调用 PT-PV 或 Calibre，执行 PV Signoff 校验（LVS/ERC/ANTR），report 落磁盘，返回通过/失败       |
 | `run_signoff`   | Signoff Check | Phase2 并行 | `design_name`, `run_dir`                 | `{"signoff_pass": bool, "violations": list}` | 调用 Signoff 检查工具（如 Innovus Signoff），检查 DRC/Conectivity/Mask，report 落磁盘，返回结果 |
-| `run_fix_setup` | FixSetup      | Phase3 分支 | `design_name`, `run_dir`, `fix_strategy` | `{"fix_done": bool, "setup_vio": int}`       | 调用 Setup ECO 修复工具（如 Innovus Fix），根据 fix\_strategy 配置修复参数，日志落磁盘，返回修复后违例数    |
-| `run_fix_hold`  | FixHold       | Phase3 分支 | `design_name`, `run_dir`, `fix_strategy` | `{"fix_done": bool, "hold_vio": int}`        | 调用 Hold ECO 修复工具，同上模式                                                      |
+| `run_pt_fix_setup` | FixSetup      | Phase3 分支 | `design_name`, `run_dir`, `fix_strategy` | `{"fix_done": bool, "setup_vio": int}`       | 调用 Setup ECO 修复工具（如 Innovus Fix），根据 fix\_strategy 配置修复参数，日志落磁盘，返回修复后违例数    |
+| `run_pt_fix_hold`  | FixHold       | Phase3 分支 | `design_name`, `run_dir`, `fix_strategy` | `{"fix_done": bool, "hold_vio": int}`        | 调用 Hold ECO 修复工具，同上模式                                                      |
 
-（`run_fix_leakage` 后续按需加，同样模式）
+（`run_pt_fix_leakage` 后续按需加，同样模式）
 
 ### 7.3 MCP API 统一签名规范
 
@@ -1602,8 +1610,8 @@ class ECOMCPServer(Protocol):
     def run_sta(self, design_name: str, run_dir: str) -> dict: ...
     def run_pv(self, design_name: str, run_dir: str) -> dict: ...
     def run_signoff(self, design_name: str, run_dir: str) -> dict: ...
-    def run_fix_setup(self, design_name: str, run_dir: str, fix_strategy: str) -> dict: ...
-    def run_fix_hold(self, design_name: str, run_dir: str, fix_strategy: str) -> dict: ...
+    def run_pt_fix_setup(self, design_name: str, run_dir: str, fix_strategy: str) -> dict: ...
+    def run_pt_fix_hold(self, design_name: str, run_dir: str, fix_strategy: str) -> dict: ...
 ```
 
 当真实 MCP Server 实现时，如果签名和 Protocol 不一致（比如 `run_sta` 返回了 `str` 而不是 `dict`，或多了一个 `verbose` 参数），IDE 会立刻标红提示。
@@ -1622,13 +1630,13 @@ MOCK_SCENARIOS = {
         "run_sta":        {"setup_vio": 125, "hold_vio": 47},
         "run_pv":         {"pv_pass": True},
         "run_signoff":    {"signoff_pass": True, "violations": []},
-        "run_fix_setup":  {"fix_done": True, "setup_vio": 30},
-        "run_fix_hold":   {"fix_done": True, "hold_vio": 10},
+        "run_pt_fix_setup":  {"fix_done": True, "setup_vio": 30},
+        "run_pt_fix_hold":   {"fix_done": True, "hold_vio": 10},
     },
     "convergence": {
         "run_sta":        {"setup_vio": 80, "hold_vio": 25},
-        "run_fix_setup":  {"fix_done": True, "setup_vio": 15},
-        "run_fix_hold":   {"fix_done": True, "hold_vio": 5},
+        "run_pt_fix_setup":  {"fix_done": True, "setup_vio": 15},
+        "run_pt_fix_hold":   {"fix_done": True, "hold_vio": 5},
     },
     "phase1_ext_error": {
         "run_ext": "raise Exception('StarRCX license 失效')",
@@ -1643,7 +1651,7 @@ MOCK_SCENARIOS = {
         "run_signoff": "raise Exception('Signoff DRC 检查失败，mask violation')",
     },
     "phase3_fix_error": {
-        "run_fix_setup": "raise Exception('ECO Fix 工具异常，setup 无法进一步收敛')",
+        "run_pt_fix_setup": "raise Exception('ECO Fix 工具异常，setup 无法进一步收敛')",
     },
 }
 
@@ -1685,11 +1693,11 @@ class MockECOMCPServer(ECOMCPServer):
     def run_signoff(self, design_name: str, run_dir: str) -> dict:
         return self._execute("run_signoff", design_name, run_dir)
 
-    def run_fix_setup(self, design_name: str, run_dir: str, fix_strategy: str) -> dict:
-        return self._execute("run_fix_setup", design_name, run_dir, fix_strategy=fix_strategy)
+    def run_pt_fix_setup(self, design_name: str, run_dir: str, fix_strategy: str) -> dict:
+        return self._execute("run_pt_fix_setup", design_name, run_dir, fix_strategy=fix_strategy)
 
-    def run_fix_hold(self, design_name: str, run_dir: str, fix_strategy: str) -> dict:
-        return self._execute("run_fix_hold", design_name, run_dir, fix_strategy=fix_strategy)
+    def run_pt_fix_hold(self, design_name: str, run_dir: str, fix_strategy: str) -> dict:
+        return self._execute("run_pt_fix_hold", design_name, run_dir, fix_strategy=fix_strategy)
 ```
 
 #### 切换点：一行替换 Mock ↔ 真实
@@ -1841,7 +1849,7 @@ MCP API 在 Step 节点内部直接调用，执行 EDA 原子任务。调用规�
 
 Coordinator Agent 会根据 ECO 违例情况**动态规划**执行哪些 Step、跳过哪些 Step、新增哪些 Step。复用方式：
 
-- Step 节点：**全部复用**（`run_sta`、`run_fix_setup`...）
+- Step 节点：**全部复用**（`run_sta`、`run_pt_fix_setup`...）
 - MCP API：**全部复用**（7 个 step 粒度 API 不变）
 - State：**扩展复用**（加 `planned_steps`、`current_plan` 字段，原字段不变）
 - 流转拓扑：**替换**——把硬编码的条件边拓扑换成 Coordinator 输出的动态拓扑，**Step 节点代码一行不动**
@@ -1882,7 +1890,7 @@ MCP API 定在 Step 粒度是兼容的关键——阶段二的 Coordinator 要"�
 **目标**：跑通 MCP Server 和 LangGraph Step 节点的调用链路。
 
 1. 实现 MCP Server 的 7 个 step 粒度 API（第七节 7.2 表格），每个 API 先用 mock 数据返回结构化摘要（EDA 工具还没接的阶段）
-2. 实现 LangGraph 的 Step 节点（用 `_run_step` 辅助函数）：`run_eco_route`、`run_ext`、`run_sta`、`run_pv`、`run_signoff`、`run_fix_setup`、`run_fix_hold`
+2. 实现 LangGraph 的 Step 节点（用 `_run_step` 辅助函数）：`run_eco_route`、`run_ext`、`run_sta`、`run_pv`、`run_signoff`、`run_pt_fix_setup`、`run_pt_fix_hold`
 3. 实现 Init、Error Handler、Finalize 通用节点
 4. 加分流条件边：agent 节点之后，根据用户输入分流到对话路径或 ECO 路径（原型阶段用关键字匹配）
 
@@ -2022,7 +2030,7 @@ def mock_run_sta(design_name: str, run_dir: str) -> dict:
 | ----- | -------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | L2-01 | 正常路径 + result\_keys 写入     | MCP 返回 `{"setup_vio": 100, "hold_vio": 50}`                               | `{step_status: {}, phase_status: {}, design_name: "d1", run_dir: "/tmp"}` | `step_status["run_sta"]="done"`, `phase_status["phase2"]="done"`, `setup_vio=100`, `hold_vio=50`, `current_step="run_sta"`, `current_phase="phase2"` |
 | L2-02 | 异常路径标记 error               | MCP 抛 Exception("timeout")                                                | 同上                                                                        | `step_status["run_sta"]="error"`, `phase_status["phase2"]="error"`, `error_msg="[run_sta] timeout"`                                                  |
-| L2-03 | extra\_params 透传           | mock MCP 验证收到 `fix_strategy="hold"`                                       | 含 `user_fix_strategy="hold"`                                              | `run_fix_hold` 调用时收到正确的 extra\_params                                                                                                                |
+| L2-03 | extra\_params 透传           | mock MCP 验证收到 `fix_strategy="hold"`                                       | 含 `user_fix_strategy="hold"`                                              | `run_pt_fix_hold` 调用时收到正确的 extra\_params                                                                                                                |
 | L2-04 | result\_keys 中部分字段 MCP 未返回 | MCP 只返回 `{"setup_vio": 100}`，但 result\_keys 含 `["setup_vio", "hold_vio"]` | 正常 State                                                                  | 只更新 `setup_vio`，不写入 `hold_vio`（避免覆盖已有值），step\_status 仍为 done                                                                                         |
 | L2-05 | phase\_status 已含其他 Step 状态 | `phase_status={"phase1": "done", "phase2": "running"}`                    | 正常 State                                                                  | 用 `{**old, ...}` 展开式更新，保留 phase1 状态                                                                                                                  |
 
@@ -2035,8 +2043,8 @@ def mock_run_sta(design_name: str, run_dir: str) -> dict:
 | L2-08 | route\_after\_run\_ext        | `step_status["run_ext"]="done"`        | `[Send("run_sta", state), Send("run_pv", state), Send("run_signoff", state)]`（三个 Send 对象） |
 | L2-09 | route\_after\_run\_ext        | `step_status["run_ext"]="error"`       | `"error_handler"`                                                                         |
 | L2-10 | route\_after\_phase2\_summary | `step_status["run_sta"]="error"`       | `"error_handler"`                                                                         |
-| L2-11 | route\_after\_phase2\_summary | `user_fix_strategy="setup"`            | `"run_fix_setup"`                                                                         |
-| L2-12 | route\_after\_phase2\_summary | `user_fix_strategy="hold"`             | `"run_fix_hold"`                                                                          |
+| L2-11 | route\_after\_phase2\_summary | `user_fix_strategy="setup"`            | `"run_pt_fix_setup"`                                                                         |
+| L2-12 | route\_after\_phase2\_summary | `user_fix_strategy="hold"`             | `"run_pt_fix_hold"`                                                                          |
 | L2-13 | route\_after\_phase2\_summary | `user_fix_strategy="invalid_strategy"` | `"error_handler"`                                                                         |
 | L2-14 | route\_after\_phase3\_summary | `user_iter_choice="continue"`          | `"init"`                                                                                  |
 | L2-15 | route\_after\_phase3\_summary | `user_iter_choice="stop"`              | `"finalize"`                                                                              |
@@ -2081,8 +2089,8 @@ def test_graph_topology_phase1_serial():
 | ----- | ------------------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | L3-01 | Phase1 串行拓扑                                | Init → run\_eco\_route → run\_ext 严格按序                          | graph.stream() 至 run\_ext 完成（mock MCP 不抛异常，后续路由正常）      | `[init, run_eco_route, run_ext]`                                                                      |
 | L3-02 | Phase2 Send 并行拓扑                           | run\_ext 后同时触发 run\_sta / run\_pv / run\_signoff                | 追踪 graph.stream() 的事件                                   | run\_ext 完成后，三个并行节点**同时**出现在事件中（顺序不定但全部出现），然后聚合到 phase2\_summary                                      |
-| L3-03 | Phase3 分支路由（setup）                         | phase2\_summary 后 user\_fix\_strategy="setup" → run\_fix\_setup | 手动设置 `user_fix_strategy="setup"` 到 State，graph.stream() | `[phase2_summary, run_fix_setup, phase3_summary]`（**不出现** run\_fix\_hold）                             |
-| L3-04 | Phase3 分支路由（hold）                          | 同上，strategy="hold" → run\_fix\_hold                             | 同上                                                      | `[phase2_summary, run_fix_hold, phase3_summary]`（**不出现** run\_fix\_setup）                             |
+| L3-03 | Phase3 分支路由（setup）                         | phase2\_summary 后 user\_fix\_strategy="setup" → run\_fix\_setup | 手动设置 `user_fix_strategy="setup"` 到 State，graph.stream() | `[phase2_summary, run_pt_fix_setup, phase3_summary]`（**不出现** run\_fix\_hold）                             |
+| L3-04 | Phase3 分支路由（hold）                          | 同上，strategy="hold" → run\_fix\_hold                             | 同上                                                      | `[phase2_summary, run_pt_fix_hold, phase3_summary]`（**不出现** run\_fix\_setup）                             |
 | L3-05 | 迭代循环 continue → Init                       | phase3\_summary 后 user\_iter\_choice="continue" → 回到 init       | 设置 `user_iter_choice="continue"`                        | `[phase3_summary, init, ...]`（init 出现第二次）                                                             |
 | L3-06 | 迭代循环 stop → Finalize                       | user\_iter\_choice="stop" → finalize → END                      | 设置 `user_iter_choice="stop"`                            | `[phase3_summary, finalize]`，graph.stream() 返回完毕                                                      |
 | L3-07 | run\_eco\_route 异常 → Error Handler         | mock MCP run\_eco\_route 抛异常                                    | graph.stream()                                          | `[init, run_eco_route, error_handler]`                                                                |
@@ -2129,8 +2137,8 @@ def test_phase2_parallel_state_merge():
 
 | 用例ID  | 用例名称                                    | 前置状态                         | 执行动作                                            | 预期 State 变化                                                                                                         |
 | ----- | --------------------------------------- | ---------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| L4-04 | 中断1 resume="setup" → 路由 run\_fix\_setup | 停在 phase2\_summary interrupt | `graph.stream(Command(resume="setup"), config)` | 恢复后 `user_fix_strategy == "setup"`，State 更新 `prev_setup_vio`/`prev_hold_vio`，然后路由到 `run_fix_setup`（stream 事件中出现该节点） |
-| L4-05 | 中断1 resume="hold" → 路由 run\_fix\_hold   | 同上                           | `Command(resume="hold")`                        | 同上，但路由到 `run_fix_hold`                                                                                              |
+| L4-04 | 中断1 resume="setup" → 路由 run\_fix\_setup | 停在 phase2\_summary interrupt | `graph.stream(Command(resume="setup"), config)` | 恢复后 `user_fix_strategy == "setup"`，State 更新 `prev_setup_vio`/`prev_hold_vio`，然后路由到 `run_pt_fix_setup`（stream 事件中出现该节点） |
+| L4-05 | 中断1 resume="hold" → 路由 run\_fix\_hold   | 同上                           | `Command(resume="hold")`                        | 同上，但路由到 `run_pt_fix_hold`                                                                                              |
 | L4-06 | 中断2 resume="continue" → 回到 init         | 停在 phase3\_summary interrupt | `Command(resume="continue")`                    | `iteration_cnt` 自增，路由到 `init`（新一轮开始）                                                                                |
 | L4-07 | 中断2 resume="stop" → finalize → END      | 同上                           | `Command(resume="stop")`                        | 路由到 `finalize` 然后 END，`graph.get_state(config).next` 为空                                                             |
 
@@ -2183,7 +2191,7 @@ def test_interrupt_position_in_phase2_summary():
 | L5-02 | run\_sta 异常（Phase2 并行中）→ 路由 Error Handler         | mock run\_sta 抛异常，run\_pv 和 run\_signoff 正常           | graph.stream()                                                                                                                                           | 三个并行节点中 run\_sta 标记 error，run\_pv/run\_signoff 标记 done → phase2\_summary 检测到 error → error\_handler；State 中 `phase_status["phase2"]="error"`                                                                    |
 | L5-03 | Error Handler retry：update\_state 重置 + goto       | 在 L5-01 基础上                                           | 1. `graph.update_state(config, {"step_status": {"run_eco_route": "pending"}, "error_msg": ""})` 2. `graph.stream(Command(goto="run_eco_route"), config)` | run\_eco\_route 重新执行（从 pending → running → done/error），不重跑 Init                                                                                                                                                 |
 | L5-04 | Error Handler abort → finalize → END              | 在 L5-01 基础上                                           | `graph.stream(Command(goto="finalize"), config)`                                                                                                         | 直接跳到 finalize，phase\_status 保持 error 但不再重试                                                                                                                                                                      |
-| L5-05 | run\_fix\_setup 异常 → Error Handler → retry Phase3 | mock run\_fix\_setup 抛异常                              | 跑到 Phase3 run\_fix\_setup → 异常 → Error Handler → retry → 只重跑 run\_fix\_setup 这一个 Step                                                                    | Command goto `run_fix_setup`                                                                                                                                                                                    |
+| L5-05 | run\_fix\_setup 异常 → Error Handler → retry Phase3 | mock run\_fix\_setup 抛异常                              | 跑到 Phase3 run\_fix\_setup → 异常 → Error Handler → retry → 只重跑 run\_fix\_setup 这一个 Step                                                                    | Command goto `run_pt_fix_setup`                                                                                                                                                                                    |
 | L5-06 | phase2\_summary 检测到并行节点部分 error 时不中断              | L2-17 的场景                                             | 跑到 phase2\_summary                                                                                                                                       | **不**触发 interrupt()，直接 return State 让条件边路由 error\_handler。这保证了 Phase2 有失败时不会弹出"请选择修复策略"，避免用户在已损坏的数据上做决策                                                                                                         |
 
 ***
@@ -2205,7 +2213,7 @@ def test_phase2_summary_interrupt_rerun_safety():
     state1 = graph.get_state(config).values
     prev_setup_at_interrupt = state1["prev_setup_vio"]
     
-    # Resume 恢复，但立刻又触发了 interrupt（比如 Phase3 run_fix_setup 也有 interrupt）
+    # Resume 恢复，但立刻又触发了 interrupt（比如 Phase3 run_pt_fix_setup 也有 interrupt）
     # 然后 kill graph，重建，再 resume 一次 → phase2_summary 会被 rerun
     graph2 = build_graph(mcp_mock)
     list(graph2.stream(Command(resume="hold"), config))
@@ -2257,8 +2265,8 @@ MOCK_SCENARIOS = {
         "run_sta":       {"setup_vio": 125, "hold_vio": 47},
         "run_pv":        {"pv_pass": True},
         "run_signoff":   {"signoff_pass": True, "violations": []},
-        "run_fix_setup": {"fix_done": True, "setup_vio": 30},
-        "run_fix_hold": {"fix_done": True, "hold_vio": 10},
+        "run_pt_fix_setup": {"fix_done": True, "setup_vio": 30},
+        "run_pt_fix_hold": {"fix_done": True, "hold_vio": 10},
     },
     "phase2_sta_error": {
         # run_sta 抛异常，其他正常

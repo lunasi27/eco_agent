@@ -13,6 +13,7 @@ from src.routers.phase_routes import (
     route_after_run_eco_route,
     route_after_run_ext,
 )
+from src.utils.constants import normalize_fix_strategy, normalize_iter_choice
 
 
 BASE_STATE = {
@@ -177,13 +178,13 @@ class TestRouteAfterPhase2Summary:
         }
         assert route_after_phase2_summary(state) == "run_pt_fix_hold"
 
-    def test_invalid_strategy_goes_to_error_handler(self):
+    def test_invalid_strategy_loops_back_to_summary(self):
         state = {
             **BASE_STATE,
             "step_status": {"run_sta": "done"},
             "user_fix_strategy": "unknown_strategy",
         }
-        assert route_after_phase2_summary(state) == "error_handler"
+        assert route_after_phase2_summary(state) == "phase2_summary"
 
 
 class TestRouteAfterPhase3Summary:
@@ -195,6 +196,51 @@ class TestRouteAfterPhase3Summary:
         state = {**BASE_STATE, "user_iter_choice": "stop"}
         assert route_after_phase3_summary(state) == "finalize"
 
-    def test_default_empty_goes_to_finalize(self):
+    def test_default_empty_loops_back_to_summary(self):
+        """空选择/乱码不能被默认当成 stop，应回到 phase3_summary 重问"""
         state = {**BASE_STATE, "user_iter_choice": ""}
-        assert route_after_phase3_summary(state) == "finalize"
+        assert route_after_phase3_summary(state) == "phase3_summary"
+
+    def test_garbage_loops_back_to_summary(self):
+        state = {**BASE_STATE, "user_iter_choice": "asdf"}
+        assert route_after_phase3_summary(state) == "phase3_summary"
+
+
+# ============================================================
+# 断点输入校验：只接受提示中给出的规范关键词（大小写/空白不敏感）
+# ============================================================
+
+
+class TestNormalizeFixStrategy:
+    @pytest.mark.parametrize("raw,expected", [
+        ("setup", "setup"), ("SETUP", "setup"), ("  setup ", "setup"),
+        ("hold", "hold"), ("HOLD", "hold"), (" hold ", "hold"),
+        ("leakage", "leakage"), ("LEAKAGE", "leakage"),
+    ])
+    def test_valid_keywords(self, raw, expected):
+        assert normalize_fix_strategy(raw) == expected
+
+    @pytest.mark.parametrize("raw", [
+        "asdf", "", "  ", None,
+        # 不提供任何别名：缩写、数字、中文一律拒绝
+        "s", "1", "设置", "保持", "漏电",
+    ])
+    def test_invalid_returns_empty(self, raw):
+        assert normalize_fix_strategy(raw) == ""
+
+
+class TestNormalizeIterChoice:
+    @pytest.mark.parametrize("raw,expected", [
+        ("continue", "continue"), ("CONTINUE", "continue"), (" continue ", "continue"),
+        ("stop", "stop"), ("STOP", "stop"),
+    ])
+    def test_valid_keywords(self, raw, expected):
+        assert normalize_iter_choice(raw) == expected
+
+    @pytest.mark.parametrize("raw", [
+        "asdf", "", "  ", None, "setup",
+        # 不提供任何别名：缩写、数字、中文一律拒绝
+        "c", "s", "y", "1", "继续", "停止",
+    ])
+    def test_invalid_returns_empty(self, raw):
+        assert normalize_iter_choice(raw) == ""

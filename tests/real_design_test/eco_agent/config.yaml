@@ -1,0 +1,62 @@
+project_name: SOC_XXX_SUB
+work_dir: /home/hwang/trae/eco_agent/tests/real_design_test
+dsub_queue:
+- '# TODO: 按实际集群修改'
+- dsub -A root.xxxx.class -q lang -R 'cpu=8;mem=40000'
+project_cshrc: '# TODO: 填入 IT 环境脚本路径（如 /data/.../project.cshrc）'
+base:
+  run_eco_route: '{work_dir}/2.APR.{project_name}'
+  run_ext: '{work_dir}/3.EXT.{project_name}'
+  run_sta_bin: '{base.run_eco_route}/tools/sta'
+  run_sta_rpt: '# TODO: 填入 STA 报告目录（跨盘路径，扫描不到）'
+  run_pv: '# TODO: 填入 PV 目录（跨盘路径，扫描不到）'
+  run_signoff: '{base.run_eco_route}'
+  run_pt_fix: '{work_dir}/4.PTECO.{project_name}'
+  run_xtop_fix: '{work_dir}/4.xtop.{project_name}'
+  dataout: '{work_dir}/0.outgoing/{project_name}'
+logs:
+  run_eco_route: '{base.run_eco_route}/log'
+  run_ext: '{base.run_ext}/run/LOGS'
+  run_sta: '{base.run_sta_rpt}/{project_name}'
+  run_pv: '{base.run_pv}/log'
+  run_signoff: '{base.run_signoff}/log/signoff_check_*'
+  run_pt_fix: '{base.run_pt_fix}/log'
+  run_xtop_fix: '{base.run_xtop_fix}/log'
+wait_flags:
+  run_eco_route: '{base.dataout}/{project_name}.def.ok'
+  run_ext: '{base.run_ext}/run/LOGS/{project_name}.spef.smc/LOG/ok.flag'
+  run_sta: '{base.run_sta_rpt}/{project_name}/{project_name}.sta.ok'
+  run_pv: '{base.run_pv}/log/{project_name}.pv.ok'
+  run_signoff: '{base.run_signoff}/log/signoff_check.ok'
+  run_pt_fix_setup: '{base.run_pt_fix}/output/fix_setup/fix_setup.tcl'
+  run_pt_fix_hold: '{base.run_pt_fix}/output/fix_hold/fix_hold.tcl'
+  run_pt_fix_leakage: '{base.run_pt_fix}/output/fix_leakage/fix_leakage.tcl'
+  run_pt_fix_drv: '{base.run_pt_fix}/output/fix_drv/fix_drv.tcl'
+  run_xtop_fix_hold: '{base.run_xtop_fix}/output/xtop_fix_hold.tcl'
+step_command:
+  run_eco_route: pds_innovus 6.ecoRt
+  run_ext: pds_starrc DEF_SMC
+  run_sta: run_sta.csh {project_name} all CTS ptpx -input {base.dataout} -output {base.run_sta_rpt}
+  run_pv: source 100P_PV.csh {design_name}
+  run_signoff: pds_innovus 6-2.signoff_check
+  run_pt_fix_setup: pds_pteco setup
+  run_pt_fix_hold: pds_pteco hold
+  run_pt_fix_leakage: pds_pteco leakage
+  run_pt_fix_drv: pds_pteco ldrc
+  run_xtop_fix_hold: source run_fix_hold.csh {design_name}
+timeout_s:
+  run_eco_route: 3600
+  run_ext: 3600
+  run_sta: 7200
+  run_pv: 3600
+  run_signoff: 3600
+  run_pt_fix_setup: 3600
+  run_pt_fix_hold: 1800
+  run_pt_fix_leakage: 1800
+  run_pt_fix_drv: 1800
+  run_xtop_fix_hold: 1800
+design_name: '{project_name}'
+execution_dir: '{base.run_eco_route}'
+preco_db: '{base.run_eco_route}/DB/{design_name}_fixhold.enc'
+preco_db_next: '{base.run_eco_route}/DB/{design_name}_fixhold_fixsetup.enc'
+eco_scripts: '{base.run_pt_fix}/output/setup.tcl'

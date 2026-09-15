@@ -1,7 +1,7 @@
 # ECO Agent 产品化路线图
 
-> 最后更新：2026-09-13
-> 适用版本：eco-agent 0.1.0（原型完成）
+> 最后更新：2026-09-15
+> 适用版本：eco-agent 0.1.0（原型完成 + Real 模式 + 交互层）
 > 总工作量预估：~30 人天（不含真实 EDA 环境等待时间）
 
 ---
@@ -19,14 +19,14 @@
 
 ## 当前状态快照
 
-| 维度 | 原型得分 | 产品级门槛 |
-|---|---|---|
-| 功能完备性 | 95/100 | 80 |
-| 架构设计 | 90/100 | 70 |
-| 可维护性 | 50/100 | 85 |
-| 生产就绪性 | 20/100 | 80 |
-| 可观测性 | 10/100 | 70 |
-| 用户体验 | 40/100 | 80 |
+| 维度 | 原型得分 | 产品级门槛 | 备注 |
+|---|---|---|---|
+| 功能完备性 | 95/100 | 80 | 10 个 Step + Real 模式 + slash 命令 + /init 全部实现 |
+| 架构设计 | 90/100 | 70 | config.yaml 合并 + resolve 简化 + CMDS_FILE 方案 B |
+| 可维护性 | 55/100 | 85 | ~300 测试全绿（含 BSD csh 集成测试） |
+| 生产就绪性 | 30/100 | 80 | Real 模式代码完成，待真实 EDA 环境验证 |
+| 可观测性 | 10/100 | 70 | 待 P0-2 结构化日志 |
+| 用户体验 | 55/100 | 80 | 交互模式 + slash 命令 + /init 自动生成配置 |
 
 ---
 
@@ -42,7 +42,7 @@
   - [ ] 用 Python subprocess 手动跑一次 Innovus session（route 一个小设计），记录实际耗时、stdout/stderr 格式、退出码
   - [ ] 手动跑 Primetime STA，确认如何从 stdout 提取 violation 数量
   - [ ] 手动 kill 一个正在运行的 EDA 进程，确认是否会遗留子进程（用 `pkill -P` 验证）
-  - [ ] 模拟"run_fix_setup 跑到一半 kill"的场景，观察 EDA 留下的 netlist/session 文件是否会影响下一次重跑
+  - [ ] 模拟"run_pt_fix_setup 跑到一半 kill"的场景，观察 EDA 留下的 netlist/session 文件是否会影响下一次重跑
   - [ ] 确认 retry 的正确语义：是 clean run_dir 后重跑？还是整个 Phase3 从 fix 策略选择开始重跑？
 - **验收标准**：
   - 拿到三个 EDA 工具的 stdout 样本和解析规则
@@ -52,24 +52,23 @@
 
 ---
 
-### 🔴 P0-1：真实 MCP Server 实现
+### ✅ P0-1：真实 MCP Server 实现（已完成）
 
-- **工作量**：3 天
+- **工作量**：3 天 → 实际完成
 - **难度**：🔴 高（依赖 P0-0 的产出）
 - **前置条件**：P0-0 smoke test 报告 + 真实 EDA 环境
-- **产出**：`src/mcp_server/real.py` + `tests/l1_mcp_api/test_real_mcp.py`
+- **产出**：`src/mcp_server/real.py` + `parsers.py` + `scripts/eda/run_step_wrapper.csh` + `config/config.yaml`
 - **具体动作**：
-  - [ ] 实现 `class RealMCPServer(MCPServerProtocol)`，subprocess 调用 Innovus/Primetime/Calibre
-  - [ ] 每个 Step 实现独立 timeout（STA 30min / PV 2h / signoff 4h / fix_setup 2h / fix_hold 2h / fix_leakage 2h / route 1h / ext 30min）
-  - [ ] 超时 kill：`timeout --signal=KILL {seconds} <cmd>` + kill 子进程树 `pkill -P {pid}`
-  - [ ] 解析 EDA stdout：提取 vio 数量、timing path、DRC 数量（为 State 字段提供真实数据）
-  - [ ] 日志采集：每个 Step 的完整 stdout/stderr 写入 `run_dir/{step_name}.log`
-  - [ ] 失败时自动采集 core dump / 异常快照（如果 EDA 有）
-  - [ ] 提供环境切换开关：`USE_REAL_MCP=true` 启用真实 MCP，否则用 Mock
+  - [x] 实现 `class RealECOMCPServer(ECOMCPServer)`，读 config.yaml → resolve 占位符 → 写临时命令文件 → subprocess 调 wrapper
+  - [x] 每个 Step 实现独立 timeout（config.yaml.timeout_s，默认 3600s 兜底）
+  - [x] 超时 kill：subprocess.run(timeout=...) + finally 清理临时命令文件
+  - [x] 解析 EDA stdout：`parsers.py` 内置 `STEP_PARSE_PATTERNS` 正则提取 violations
+  - [x] 日志采集：wrapper 逐行 tee 到 log_dir/{step_name}.log
+  - [x] 提供环境切换开关：`ECO_BACKEND=real` 启用真实 MCP，`mock` 用 Mock
+  - [x] BSD csh 集成测试验证 wrapper 语法兼容性（修复 `$?X &&` 非短路、`$(pwd)` 非 csh 语法、tee 吞退出码三个问题）
 - **验收标准**：
-  - 在真实设计上，单个 Step 执行时间与 smoke test 一致
-  - 超时被正确 kill，run_dir 保留 .log 文件用于诊断
-  - Mock 和 Real 的 MCP API 返回字段完全一致（Mock 可以无缝替换）
+  - ✅ 代码完成，~300 测试全绿（含 20 个 MCP Real 模式测试）
+  - ⏸ 待真实 EDA 环境验证（依赖 P0-0 + P0-5）
 
 ---
 
@@ -85,7 +84,7 @@
   - [ ] 日志级别：DEBUG（Step 内部细节）、INFO（Step 开始/结束）、WARNING（non-blocking 异常）、ERROR（blocking 异常）
   - [ ] 同时输出到两个目的地：stderr（实时查看）+ `run_dir/pipeline.log`（完整日志）
   - [ ] Step 耗时自动记录：`logger.info("step_done", step="run_sta", elapsed_sec=45.2)`
-  - [ ] Error Handler interrupt 时记录：`logger.warning("user_interrupt", step="run_fix_setup", choice="retry")`
+  - [ ] Error Handler interrupt 时记录：`logger.warning("user_interrupt", step="run_pt_fix_setup", choice="retry")`
   - [ ] 替换 `src/nodes/` / `src/routers/` / `src/main.py` 所有 print()
 - **验收标准**：
   - 单次 pipeline run 的完整日志可以从 `pipeline.log` 完整重建执行过程
@@ -94,22 +93,23 @@
 
 ---
 
-### 🔴 P0-3：超时控制 + 资源清理
+### 🟡 P0-3：超时控制 + 资源清理（部分完成）
 
 - **工作量**：1-2 天
 - **难度**：🟡 中
 - **前置条件**：无（但真实 EDA 接入后需要验证 kill 行为）
-- **产出**：`src/utils/timeout.py` + `src/mcp_server/base.py`
+- **产出**：`src/utils/timeout.py` + `src/mcp_server/real.py` 完善
 - **具体动作**：
+  - [x] 超时控制：RealECOMCPServer 从 config.yaml.timeout_s 读取，subprocess.run(timeout=...) 兜底
+  - [x] 临时文件清理：finally 块 `_cleanup_cmd_files` 删除 .cmds + .status 文件
   - [ ] 统一 SqliteSaver 连接管理：用 context manager 或 atexit handler 确保进程退出时关闭所有 SQLite 连接
-  - [ ] 超时 kill 策略封装：`class SubprocessRunner` 负责 timeout + kill + 子进程树清理
+  - [ ] 子进程树清理：超时 kill 后验证 EDA 子进程是否被彻底杀掉（`pkill -P` 双重保险）
   - [ ] run_dir 清理策略：失败的 run_dir 自动保留用于诊断，成功的 run_dir 保留（可通过 config 配置）
-  - [ ] 防止进程泄漏：atexit handler 检查当前是否有未关闭的 EDA subprocess
   - [ ] SIGTERM 优雅退出：收到 SIGTERM 时 gracefully shutdown（保存 Checkpoint → 清理资源 → 退出）
 - **验收标准**：
-  - Ctrl+C 后：Checkpoint 正常保存、EDA 子进程被 kill、SQLite 连接关闭
-  - kill -9 后：EDA 子进程被 kill（因为 P0-1 的 timeout 已经托管了子进程树）
-  - 连续跑 10 次 pipeline 无资源泄漏（`lsof -p` 检查）
+  - ⏸ Ctrl+C 后：Checkpoint 正常保存、EDA 子进程被 kill、SQLite 连接关闭（待真实环境验证）
+  - ⏸ kill -9 后：EDA 子进程被 kill（待真实环境验证）
+  - ⏸ 连续跑 10 次 pipeline 无资源泄漏（待真实环境验证）
 
 ---
 
@@ -154,15 +154,15 @@
 
 ### P0 工作量汇总
 
-| 子项 | 工作量 | 前置依赖 |
-|---|---|---|
-| P0-0 Smoke Test 预研 | 1 天 | 无（但需要 EDA 环境） |
-| P0-1 真实 MCP | 3 天 | P0-0 |
-| P0-2 结构化日志 | 1 天 | 无（可并行） |
-| P0-3 超时 + 资源清理 | 1-2 天 | P0-0（kill 行为验证） |
-| P0-4 Error 边界策略 | 2 天 | P0-0 |
-| P0-5 冒烟测试 | 2-3 天 | P0-1 ~ P0-4 |
-| **合计** | **9~13 人天** | P0-0 是关键路径 |
+| 子项 | 工作量 | 前置依赖 | 状态 |
+|---|---|---|---|
+| P0-0 Smoke Test 预研 | 1 天 | 无（但需要 EDA 环境） | ⏸ 待 EDA 环境 |
+| P0-1 真实 MCP | 3 天 | P0-0 | ✅ 代码完成 |
+| P0-2 结构化日志 | 1 天 | 无（可并行） | ⏸ 待开发 |
+| P0-3 超时 + 资源清理 | 1-2 天 | P0-0（kill 行为验证） | 🟡 部分完成 |
+| P0-4 Error 边界策略 | 2 天 | P0-0 | ⏸ 待 P0-0 结论 |
+| P0-5 冒烟测试 | 2-3 天 | P0-1 ~ P0-4 | ⏸ 待真实环境 |
+| **合计** | **9~13 人天** | P0-0 是关键路径 | **P0-1 已完成，剩余 ~6~10 天** |
 
 ---
 
@@ -235,17 +235,19 @@
 
 ---
 
-### 🟡 P1-5：Config 校验
+### 🟡 P1-5：Config 校验（部分完成）
 
 - **工作量**：0.5 天
 - **难度**：🟢 低
 - **前置条件**：无
 - **具体动作**：
-  - [ ] YAML schema 校验：启动时校验 phase steps 是否为真实 MCP API、timeout 是否正整数
-  - [ ] 用 `pydantic`（已有依赖）定义 PipelineConfig schema
-  - [ ] 校验失败时，错误消息精确到具体配置项（"Error: phase2.steps 包含未知步骤 'run_xxx'"）
+  - [x] MCP Server Real 模式启动期校验：`_validate_step_commands()` 校验未知 step / 空命令 / timeout 非正整数
+  - [x] config_loader 构图前校验：`STEP_TO_PHASE` 注册表防跨 phase 错配
+  - [ ] YAML schema 校验：用 `pydantic` 定义 PipelineConfig schema（当前是手动 if-else）
+  - [ ] 校验失败时，错误消息精确到具体配置项
 - **验收标准**：
-  - 故意写错 YAML 里的 step 名，启动 1 秒内报错退出，不浪费时间
+  - ✅ MCP config 写错 step 名 / timeout 非正整数，启动 1 秒内报错退出
+  - ⏸ 待 pydantic schema 统一校验
 
 ---
 
@@ -307,7 +309,7 @@
 - **前置条件**：P0-2（结构化日志）
 - **具体动作**：
   - [ ] 引入 `prometheus-client`，每个 Step 上报耗时 histogram + error counter
-  - [ ] 上报指标：`step_duration_seconds{step="run_sta"}`、`step_errors_total{step="run_fix_setup", type="timeout"}`、`pipeline_iterations_total`
+  - [ ] 上报指标：`step_duration_seconds{step="run_sta"}`、`step_errors_total{step="run_pt_fix_setup", type="timeout"}`、`pipeline_iterations_total`
   - [ ] 提供 `/metrics` endpoint（可以用 FastAPI 或独立脚本 push 到 Pushgateway）
   - [ ] 提供一份 Grafana 看板 JSON（Step 耗时趋势 / Error 率 / 迭代次数分布）
 - **验收标准**：

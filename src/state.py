@@ -32,6 +32,8 @@ class ECOState(TypedDict, total=False):
     user_fix_strategy: Annotated[str, _last_writer_reducer]
     user_iter_choice: Annotated[str, _last_writer_reducer]
     user_error_choice: Annotated[str, _last_writer_reducer]
+    # 最近一次断点非法输入原文；节点据此在自环重问时提示"无效输入：xxx"
+    invalid_input: Annotated[str, _last_writer_reducer]
     retry_step: Annotated[str, _last_writer_reducer]
     phase_status: Annotated[dict, _dict_merge_reducer]
     step_status: Annotated[dict, _dict_merge_reducer]

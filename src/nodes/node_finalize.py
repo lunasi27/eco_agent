@@ -173,4 +173,9 @@ def node_finalize(state: ECOState) -> dict:
     return {
         "current_phase": "finalize",
         "interrupt_msg": summary,
+        # 清空 ECO 任务标识，回到对话模式（route_from_chat 检查 design_name）
+        # iteration_history 保留供报告查阅，下一轮 init 会重置
+        "design_name": "",
+        "iteration_cnt": 0,
+        "invalid_input": "",
     }

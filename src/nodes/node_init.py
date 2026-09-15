@@ -125,6 +125,11 @@ def make_init_node(
             "error_msg": "",
         }
 
+        # 首轮迭代（新 ECO 任务）时清空上一轮的收敛历史
+        if iteration_cnt == 1:
+            result["iteration_history"] = []
+            result["invalid_input"] = ""
+
         if design_dir:
             result["design_dir"] = design_dir
 

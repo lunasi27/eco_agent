@@ -1,6 +1,24 @@
 VALID_FIX_STRATEGIES = {"setup", "hold", "leakage"}
 VALID_ITER_CHOICES = {"continue", "stop"}
 
+
+def normalize_fix_strategy(raw: str) -> str:
+    """只接受提示中给出的关键词 setup/hold/leakage（大小写、首尾空白不敏感）；
+    其他输入一律返回空串，由节点自环重问。"""
+    if raw is None:
+        return ""
+    val = raw.strip().lower()
+    return val if val in VALID_FIX_STRATEGIES else ""
+
+
+def normalize_iter_choice(raw: str) -> str:
+    """只接受提示中给出的关键词 continue/stop（大小写、首尾空白不敏感）；
+    其他输入一律返回空串，由节点自环重问。"""
+    if raw is None:
+        return ""
+    val = raw.strip().lower()
+    return val if val in VALID_ITER_CHOICES else ""
+
 PHASES = ("init", "phase1", "phase2", "phase3")
 
 STEP_NAMES = (

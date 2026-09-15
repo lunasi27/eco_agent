@@ -40,8 +40,8 @@
 │         │                                                               │
 │    ┌────┼────┐                                                          │
 │    ▼    ▼    ▼                                                          │
-│ fix_  fix_ fix_leakage  (Phase3 分支, leakage 占位)                     │
-│ setup hold                                                              │
+│ pt_fix_  pt_fix_  pt_fix_leakage  (Phase3 分支)                          │
+│ setup    hold                                                           │
 │    │    │                                                               │
 │    └────┼────┘                                                          │
 │         ▼                                                               │
@@ -131,11 +131,11 @@ print(g.get_state(cfg).values)
 ### 方式二：CLI
 
 ```bash
-# 使用默认配置（SqliteSaver + happy_path）
-python -m src.main --config config/default.yaml
+# 交互式对话模式（默认）— 启动后可和 Agent 聊天，用 /run_eco 开跑
+python -m src.main --config config/config.yaml
 
 # 指定 scenario
-python -m src.main --scenario phase2_sta_error
+python -m src.main --config config/config.yaml --scenario phase2_sta_error
 
 # 完全非交互模式（用于脚本或 CI）
 python -m src.main --no-interactive
@@ -153,7 +153,7 @@ python -m src.main --no-interactive
 | **校验** | `init` | 初始化工作目录 + 检查 EDA 环境 |
 | **串行 Step** | `run_eco_route` → `run_ext` | Phase1，先后执行 |
 | **并行 Step** | `run_sta` ‖ `run_pv` ‖ `run_signoff` | Phase2，Send API 并行 |
-| **分支 Step** | `run_fix_setup` / `run_fix_hold` / `run_fix_leakage` | Phase3，根据策略选一条 |
+| **分支 Step** | `run_pt_fix_setup` / `run_pt_fix_hold` / `run_pt_fix_leakage` | Phase3，根据策略选一条 |
 | **汇聚 Gate** | `phase2_gate` / `phase3_gate` | 统一检查并行结果，单一条件路由点 |
 | **汇总 + Interrupt** | `phase2_summary` / `phase3_summary` | 生成报告 → `interrupt()` 暂停等用户输入 |
 | **错误处理** | `error_handler` | 任意 Step 出错时进入，用户选 retry 或 abort |
@@ -202,7 +202,7 @@ MockECOMCPServer 内置多个 scenario，模拟不同的流水线状态：
 | `phase2_sta_error` | Phase2 的 run_sta 抛异常 → error_handler → retry 后恢复 |
 | `phase2_pv_error` | Phase2 的 run_pv 抛异常 → phase2_summary 警告级不阻断 |
 | `phase2_signoff_error` | Phase2 的 run_signoff 抛异常 → 警告级不阻断 |
-| `phase3_fix_error` | Phase3 的 fix_setup 抛异常 → error_handler |
+| `phase3_fix_error` | Phase3 的 pt_fix_setup 抛异常 → error_handler |
 
 切换到真实 EDA 只需将 `build_graph(mcp_server=RealECOMCPServer(...), ...)` 替换 Mock 即可，图代码不需要改动。
 
@@ -210,17 +210,25 @@ MockECOMCPServer 内置多个 scenario，模拟不同的流水线状态：
 
 ## 配置
 
-编辑 `config/default.yaml`：
+编辑 `config/config.yaml`：
 
 ```yaml
 eco_agent:
   default_scenario: "happy_path"         # CLI 默认 scenario
-  default_thread_id: "demo_session"
+  default_design_name: "demo_design"
 
 checkpoint:
   backend: "sqlite"                       # "memory" | "sqlite"
   db_path: "runs/checkpoints.sqlite"      # sqlite 时生效
   check_same_thread: false
+
+llm:
+  enabled: true                           # 是否启用 LLM（false 则用规则引擎）
+  provider: "openai"                      # 客户端协议（DeepSeek/豆包等均走 openai 兼容）
+  model: "deepseek-chat"                  # 模型名
+  base_url: "https://api.deepseek.com/v1" # API 地址
+  api_key_env: "DEEPSEEK_API_KEY"         # 密钥所在环境变量名（与 provider 解耦）
+  temperature: 0
 
 mock_server:
   simulate_delay: 0.3                    # 模拟 EDA 耗时（秒）
@@ -240,7 +248,48 @@ finalize:
   rpt_glob: "*.rpt"
 ```
 
-生产部署建议复制为 `config/production.yaml` 并开启校验。
+### LLM 配置
+
+`llm.enabled=true` 时，密钥缺失会**报错退出**（不静默降级）。密钥通过环境变量传入，变量名由 `api_key_env` 指定，与 `provider` 解耦：
+
+```bash
+# 方式一：export
+export DEEPSEEK_API_KEY=sk-你的密钥
+
+# 方式二：.env 文件（项目根目录，自动加载）
+cp .env.example .env
+# 编辑 .env，写入 DEEPSEEK_API_KEY=sk-你的密钥
+```
+
+换厂商只改三个字段，代码零改动：
+
+```yaml
+# 豆包示例
+llm:
+  enabled: true
+  provider: "openai"
+  model: "doubao-pro-32k"
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  api_key_env: "ARK_API_KEY"
+```
+
+LLM 用于：意图解析（判断用户是否要跑 ECO）、闲聊回复（非 ECO 对话）。**不参与流程调度**（红线约束）。
+
+### Slash 命令
+
+交互模式中，以 `/` 开头的输入在本地处理，图保持挂起。命令在任何中断点都可用（含流水线提示等待答案时）。
+
+| 命令 | 功能 |
+|---|---|
+| `/help` | 显示所有可用命令 |
+| `/status` | 当前阶段/步骤/违例数/迭代轮次 |
+| `/run_eco <design名>` | 直接指定 design 开始跑 ECO 流水线 |
+| `/sessions` | 列出所有已保存的会话 |
+| `/resume <thread_id>` | 切换/恢复某个中断中的会话 |
+| `/new` | 放弃当前对话，开启新会话 |
+| `/exit` | 退出（流水线跑到一半时断点保留，可 `/resume` 找回） |
+
+流水线提示的领域答案（`setup`/`hold`/`leakage` 等）保持纯文本，与 `/` 前缀命令零冲突。
 
 ---
 
@@ -389,6 +438,8 @@ LangGraph ECOState（TypedDict with Annotated reducers）：
 | `user_fix_strategy` | str | phase2_summary resume 时用户选择的修复策略 | `_last_writer_reducer` |
 | `user_iter_choice` | str | phase3_summary resume 时用户选择的迭代决策 | `_last_writer_reducer` |
 | `error_msg` | str | error_handler 时的错误描述 | `_last_writer_reducer` |
+| `awaiting_design` | bool | agent 追问 design 名时标记 | `_last_writer_reducer` |
+| `messages` | list[BaseMessage] | 对话历史（LLM 闲聊上下文） | `add_messages` |
 | `step_elapsed` | dict[str, float] | 各 Step 执行耗时（秒） | `_dict_merge_reducer` |
 | `iteration_history` | list[dict] | 各轮迭代违例收敛历史 | `_dict_merge_reducer` |
 
@@ -401,9 +452,9 @@ LangGraph ECOState（TypedDict with Annotated reducers）：
 ```
 eco_agent/
 ├── config/
-│   ├── default.yaml              # 默认配置（LangGraph + 框架级）
-│   ├── production.yaml           # 生产环境配置（严格校验）
-│   ├── config.yaml               # MCP Server 完整配置（Part 1 项目级 + Part 2 运行级）
+│   ├── default.yaml              # 框架级配置（LangGraph + LLM + checkpoint）
+│   ├── production.yaml           # 生产环境覆盖配置
+│   └── config.yaml               # MCP Server 配置（项目级 + 运行级，Real 模式用）
 ├── src/
 │   ├── main.py                   # CLI 入口
 │   ├── graph_builder.py          # LangGraph 图构建（注册所有节点和边）
@@ -413,7 +464,7 @@ eco_agent/
 │   │   ├── node_init.py          # 初始化校验节点
 │   │   ├── node_phase1.py        # Phase1 串行节点（eco_route / ext）
 │   │   ├── node_phase2.py        # Phase2 并行节点（sta / pv / signoff + summary）
-│   │   ├── node_phase3.py        # Phase3 分支节点（fix_setup / fix_hold）
+│   │   ├── node_phase3.py        # Phase3 分支节点（pt_fix_setup / pt_fix_hold / pt_fix_leakage）
 │   │   ├── node_gates.py         # 并行结果汇聚节点（phase2_gate / phase3_gate）
 │   │   ├── node_error_handler.py # 统一错误处理节点
 │   │   ├── node_finalize.py      # 结束收尾节点
@@ -431,12 +482,12 @@ eco_agent/
 │   │   └── stdio_runner.py       # stdio Transport 启动入口
 │   │
 │   ├── conversation/
-│   │   └── agent.py              # agent_entry LLM 对话节点
+│   │   └── agent.py              # agent_entry / chat_fallback LLM 对话节点
 │   │
 │   ├── calling_layer/
-│   │   ├── commands.py           # /help /status /run_eco /init /sessions /resume /new /exit
+│   │   ├── commands.py           # slash 命令分发：/help /status /run_eco /init /sessions /resume /new /exit
 │   │   ├── init_command.py       # /init：扫描 EDA 目录 → 生成 eco_agent/config.yaml
-│   │   ├── event_loop.py         # 交互式 event_loop（stream → get_state → input）
+│   │   ├── event_loop.py         # 交互式 event_loop（stream → slash 命令子循环 → Command(resume)）
 │   │   └── formatters.py         # 事件/中断/终态格式化输出
 │   │
 │   └── utils/
@@ -520,8 +571,9 @@ python -W error::ResourceWarning -m pytest tests/
 
 | 指标 | 数值 |
 |---|---|
-| **测试用例总数** | 187 |
-| **通过** | 187 (100%) |
+| **测试用例总数** | 291 |
+| **通过** | 291 (100%) |
+| **跳过** | 9 |
 | **覆盖率** | **89%** |
 | **ResourceWarning** | 0 |
 
@@ -529,16 +581,19 @@ python -W error::ResourceWarning -m pytest tests/
 
 | 层级 | 覆盖重点 | 用例数 |
 |---|---|---|
-| L1 MCP API | 7 个 Step API 的签名/返回/异常 | 19 |
-| L2 Nodes | `_run_step` + 路由函数 + 汇总节点 | 16 |
-| L3 Topology | 串行/并行/分支/循环图拓扑 | 33 |
+| L1 MCP API | 7 个 Step API 的签名/返回/异常 | 27 |
+| L2 Nodes | `_run_step` + 路由函数 + 汇总节点 | 19 |
+| L3 Topology | 串行/并行/分支/循环图拓扑 | 24 |
 | L4 Recovery | MemorySaver + SqliteSaver 中断恢复 | 15 |
-| L5 Error | 各 Phase 错误 + retry/abort 完整路径 | 31 |
-| L6 Idempotency | interrupt rerun + retry 幂等性 | 5 |
-| L7 E2E | happy_path + error + 多轮迭代完整链路 | 9 |
-| P1 Conversation | LLM 对话意图识别 | 16 |
-| P2 Init | init 校验 + relaxed mode | 26 |
+| L5 Error | 各 Phase 错误 + retry/abort 完整路径 | 20 |
+| L6 Idempotency | interrupt rerun + retry 幂等性 | 6 |
+| L7 E2E | happy_path + error + 多轮迭代完整链路 | 10 |
+| P1 Conversation | LLM 对话意图识别 + 多轮闲聊 | 17 |
+| P2 Init | init 校验 + relaxed mode | 29 |
 | P5 Logs | Mock Server 日志落磁盘 | 9 |
+| Calling Layer | slash 命令 + event loop + session 管理 | 40 |
+| Config | YAML 配置加载 + deep merge | 9 |
+| MCP Server | Real/Mock Server + parsers + tool 注册 | 66 |
 
 ---
 
@@ -560,12 +615,14 @@ python -W error::ResourceWarning -m pytest tests/
 
 | 方向 | 当前状态 | 说明 |
 |---|---|---|
-| `run_fix_leakage` | ✅ 已接入 | RealECOMCPServer + wrapper + config.yaml.step_command，与其他 fix 类 step 统一 |
+| `run_pt_fix_leakage` | ✅ 已接入 | RealECOMCPServer + wrapper + config.yaml.step_command，与其他 fix 类 step 统一 |
 | `run_pt_fix_drv` | ✅ 已接入 | PT 引擎 DRV 修复，新增的第 9 个 step |
 | `run_xtop_fix_hold` | ✅ 已接入 | XTOP 引擎 hold 修复，第 10 个 step，与 PT fix 并行的引擎选择 |
 | 真实 EDA 接入 | ✅ 已就绪 | RealECOMCPServer 读 1 个 yaml → wrapper 执行 cshell/PDS 命令，只需填充真实路径和 step_command |
-| CLI 重构 | 📍 原型 | 当前 argparse 实现，后续可升级为 Typer 增加 `config list` / `thread resume` 等子命令 |
-| LLM Gateway | 📍 agent_entry 已集成 | 可扩展为多 LLM 路由（不同意图用不同模型） |
+| Slash 命令 | ✅ 已完成 | `/help` `/status` `/run_eco` `/sessions` `/resume` `/new` `/exit`，会话内交互式操作 |
+| Session 管理 | ✅ 已完成 | 三态生命周期（中断/完成/消亡）、checkpoint 自动清理、`/resume` 续跑 |
+| LLM 集成 | ✅ 已完成 | DeepSeek/豆包等 OpenAI 兼容协议，意图解析 + 闲聊回复，密钥缺失报错不降级 |
+| LLM Gateway | 📍 可扩展 | 当前单 LLM，可扩展为多 LLM 路由（不同意图用不同模型） |
 | 指标/监控 | 📍 step_elapsed 已采集 | 接入 Prometheus / Grafana 展示流水线耗时 |
 
 ---

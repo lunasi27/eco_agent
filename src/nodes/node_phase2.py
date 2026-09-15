@@ -3,7 +3,7 @@ from __future__ import annotations
 from langgraph.types import interrupt
 
 from src.state import ECOState
-from src.utils.constants import PHASE_STEPS
+from src.utils.constants import PHASE_STEPS, normalize_fix_strategy
 
 
 def _format_comparison(current: int, previous: int, label: str) -> str:
@@ -86,19 +86,41 @@ def make_phase2_summary_node(
         }
 
         # 只有当有 Phase3 且 router 是 user_choice 时才需要 interrupt
-        if has_phase3 and p3_router == "user_choice":
-            lines.extend([
-                "── 请选择修复策略 ──",
-                "可选：setup / hold / leakage / leakage",
-            ])
-            interrupt_msg = "\n".join(lines)
-            result["interrupt_msg"] = interrupt_msg
-            user_fix_strategy = interrupt(interrupt_msg)
-            result["user_fix_strategy"] = user_fix_strategy
-        else:
+        if not (has_phase3 and p3_router == "user_choice"):
             # 没有 Phase3 或 Phase3 硬路由——不需要 interrupt，直接完成
             result["interrupt_msg"] = "\n".join(lines)
+            return result
 
+        # 自环重问：上一轮输入非法时，在报告前追加无效输入提示
+        invalid_input = state.get("invalid_input", "")
+        if invalid_input:
+            lines.insert(
+                1,
+                f"[无效输入] '{invalid_input}' 不是合法的修复策略，请重新选择。",
+            )
+
+        lines.extend([
+            "── 请选择修复策略 ──",
+            "可选：setup / hold / leakage",
+        ])
+        interrupt_msg = "\n".join(lines)
+        result["interrupt_msg"] = interrupt_msg
+
+        raw_choice = interrupt(interrupt_msg)
+        user_fix_strategy = normalize_fix_strategy(raw_choice)
+
+        if not user_fix_strategy:
+            # 非法输入：不提交策略，回到本节点重新 interrupt（图内自环重问）。
+            # 未知输入绝不能被路由到任何修复分支或 error_handler（那是工具失败专用）。
+            return {
+                "current_phase": "phase2",
+                "interrupt_msg": interrupt_msg,
+                "user_fix_strategy": "",
+                "invalid_input": str(raw_choice),
+            }
+
+        result["user_fix_strategy"] = user_fix_strategy
+        result["invalid_input"] = ""
         return result
 
     return node

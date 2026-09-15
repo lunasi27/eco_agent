@@ -147,7 +147,7 @@ def _run_non_interactive(graph, config: dict, initial_input: dict | None) -> dic
             return state.values
 
         auto_answer = _auto_resume(state.values)
-        print(format_interrupt(state.values))
+        print(format_interrupt(state))
         print(f"[自动回答] {auto_answer}")
 
         current_input = Command(resume=auto_answer)

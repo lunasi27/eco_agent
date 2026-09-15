@@ -35,7 +35,7 @@ def run_event_loop(graph, config: dict, initial_input: dict | None = None) -> di
         # 命令子循环：/ 开头的输入在本地处理（图保持挂起），直到产生真正
         # 传给图的 resume 输入或退出/切换会话为止。
         while True:
-            print(format_interrupt(state.values))
+            print(format_interrupt(state))
             user_input = input("> ").strip()
 
             if user_input.startswith("/"):

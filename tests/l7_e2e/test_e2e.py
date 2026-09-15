@@ -39,7 +39,7 @@ def _consume(graph, input_val, cfg):
 class TestHappyPathE2E:
     def test_full_pipeline_single_iteration(self, config):
         mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("happy_full")
 
         _consume(g, _initial_input(), cfg)
@@ -50,8 +50,9 @@ class TestHappyPathE2E:
         assert not s.next, "完整跑通后应无后续中断"
 
         v = s.values
-        assert v.get("design_name") == "designL7"
-        assert v.get("iteration_cnt") == 1
+        # finalize 清空 design_name / iteration_cnt 回到对话模式
+        assert v.get("design_name") == ""
+        assert v.get("iteration_cnt") == 0
         assert v.get("setup_vio") == 30
         assert v.get("hold_vio") == 47
         assert v.get("pv_pass") is True
@@ -59,7 +60,7 @@ class TestHappyPathE2E:
 
     def test_finalize_writes_finished_file(self, config):
         mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("finished_file")
 
         _consume(g, _initial_input("designFin"), cfg)
@@ -77,7 +78,7 @@ class TestHappyPathE2E:
 
     def test_run_dir_created_for_each_iteration(self, config):
         mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("run_dir_created")
 
         _consume(g, _initial_input("designDir"), cfg)
@@ -94,7 +95,7 @@ class TestHappyPathE2E:
 class TestConvergenceE2E:
     def test_two_iterations_then_stop(self, config):
         mcp = MockECOMCPServer(scenario="convergence", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("conv_2iter")
 
         _consume(g, _initial_input("designConv"), cfg)
@@ -110,11 +111,12 @@ class TestConvergenceE2E:
 
         s = g.get_state(cfg)
         assert not s.next
-        assert s.values.get("iteration_cnt") == 2
+        # finalize 清空 iteration_cnt 回到对话模式
+        assert s.values.get("iteration_cnt") == 0
 
     def test_prev_violation_compared_across_iterations(self, config):
         mcp = MockECOMCPServer(scenario="convergence", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("prev_compare")
 
         _consume(g, _initial_input("designCompare"), cfg)
@@ -133,7 +135,7 @@ class TestConvergenceE2E:
 class TestStateMachineCompleteness:
     def test_phase_status_completed_after_success(self, config):
         mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("phase_complete")
 
         _consume(g, _initial_input(), cfg)
@@ -148,7 +150,7 @@ class TestStateMachineCompleteness:
 
     def test_step_status_completed_after_success(self, config):
         mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("step_complete")
 
         _consume(g, _initial_input(), cfg)
@@ -168,7 +170,7 @@ class TestStateMachineCompleteness:
 
     def test_all_phases_present_in_phase_status_dict(self, config):
         mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("all_phases")
 
         _consume(g, _initial_input(), cfg)
@@ -188,7 +190,7 @@ class TestStateMachineCompleteness:
 class TestErrorScenarioE2E:
     def test_phase2_pv_error_has_correct_error_message(self, config):
         mcp = MockECOMCPServer(scenario="phase2_pv_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("pv_err_e2e")
 
         _consume(g, _initial_input("designErr"), cfg)
@@ -202,7 +204,7 @@ class TestErrorScenarioE2E:
 
     def test_phase2_signoff_error(self, config):
         mcp = MockECOMCPServer(scenario="phase2_signoff_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("signoff_err_e2e")
 
         _consume(g, _initial_input(), cfg)

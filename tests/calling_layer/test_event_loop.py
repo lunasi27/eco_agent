@@ -55,12 +55,14 @@ def test_event_loop_fresh_conversation_explicit_messages():
     g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
     cfg = {"configurable": {"thread_id": _fresh_thread_id("el_def")}}
 
-    with patch("builtins.input", side_effect=["帮我跑 designA 的 ECO", "setup", "stop"]), \
+    with patch("builtins.input", side_effect=["帮我跑 designA 的 ECO", "setup", "stop", "/exit"]), \
          patch("builtins.print"):
         result = run_event_loop(g, cfg, initial_input={"messages": []})
 
     assert result is not None
-    assert result["design_name"] == "designA"
+    # finalize 清空 design_name 回到对话模式，此处验证流水线确实跑过
+    assert "setup_vio" in result
+    assert result["design_name"] == ""
 
 
 def test_event_loop_resume_none_input_continues_checkpoint():
@@ -145,15 +147,38 @@ def test_event_loop_status_command_mid_pipeline():
     assert "setup_vio" in result, "/status 后流水线应正常继续跑完"
 
 
+def test_event_loop_invalid_inputs_at_both_gates_reprompt():
+    """两个断点处乱输入都必须原地重问，直到拿到合法值，流程正常跑完。"""
+    mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
+    g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
+    cfg = {"configurable": {"thread_id": _fresh_thread_id("el_invalid")}}
+
+    # phase2: 乱码、旧别名(设置) → 重问；setup 放行
+    # phase3: 乱码 → 重问；stop 放行
+    with patch("builtins.input", side_effect=["asdf", "设置", "setup", "嗯嗯", "stop"]), \
+         patch("builtins.print") as mock_print:
+        result = run_event_loop(g, cfg, initial_input={"design_name": "d"})
+
+    printed = "\n".join(
+        str(call.args[0]) for call in mock_print.call_args_list if call.args
+    )
+    assert printed.count("无效输入") >= 2, "phase2 与 phase3 各至少提示一次无效输入"
+    assert "setup_vio" in result
+    assert len(result.get("iteration_history", [])) == 1, (
+        "乱输入重问不得产生迭代历史记录"
+    )
+
+
 def test_event_loop_run_eco_command_in_conversation():
     """/run_eco designA → 合成自然语言走意图解析 → 进流水线"""
     mcp = MockECOMCPServer(scenario="happy_path", simulate_delay=0)
     g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
     cfg = {"configurable": {"thread_id": _fresh_thread_id("el_runeco")}}
 
-    with patch("builtins.input", side_effect=["/run_eco designA", "setup", "stop"]), \
+    with patch("builtins.input", side_effect=["/run_eco designA", "setup", "stop", "/exit"]), \
          patch("builtins.print"):
         result = run_event_loop(g, cfg, initial_input={"messages": []})
 
-    assert result["design_name"] == "designA"
+    # finalize 清空 design_name 回到对话模式，验证流水线确实跑过
+    assert result["design_name"] == ""
     assert "setup_vio" in result

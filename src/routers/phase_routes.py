@@ -82,14 +82,16 @@ def make_route_after_phase2_summary(
         target = strategy_to_step.get(strategy, "")
         if target:
             return target
-        return "error_handler"
+        # 非法策略（节点正常应已自环拦截）：回到摘要节点重问，
+        # 而不是进 error_handler——后者是 EDA 工具真实失败的专用通道
+        return "phase2_summary"
 
     return route
 
 
 def route_after_phase2_summary(
     state: ECOState,
-) -> Literal["error_handler", "run_pt_fix_setup", "run_pt_fix_hold", "run_pt_fix_leakage"]:
+) -> Literal["error_handler", "phase2_summary", "run_pt_fix_setup", "run_pt_fix_hold", "run_pt_fix_leakage"]:
     """向后兼容：硬编码默认 Phase2 + Phase3 step 列表。"""
     return make_route_after_phase2_summary(
         PHASE_STEPS["phase2"], PHASE_STEPS["phase3"]
@@ -106,8 +108,12 @@ def route_after_phase3_gate(
 
 def route_after_phase3_summary(
     state: ECOState,
-) -> Literal["init", "finalize"]:
+) -> Literal["init", "finalize", "phase3_summary"]:
     choice = state.get("user_iter_choice", "")
     if choice == "continue":
         return "init"
-    return "finalize"
+    if choice == "stop":
+        return "finalize"
+    # 非法选择（节点正常应已自环拦截）：回到摘要节点重问，
+    # 绝不能把空串/乱码默认当成 stop 静默终结流水线
+    return "phase3_summary"

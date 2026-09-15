@@ -67,7 +67,7 @@ class TestErrorMessageFormat:
 
     def test_error_is_propagated_to_error_handler_state(self, config):
         mcp = MockECOMCPServer(scenario="phase2_pv_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("pv_error")
 
         _consume(g, _initial_input(), cfg)
@@ -84,7 +84,7 @@ class TestErrorMessageFormat:
 class TestErrorHandlerInterrupt:
     def test_error_handler_interrupt_contains_required_fields(self, config):
         mcp = MockECOMCPServer(scenario="phase1_ext_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("interrupt_fields")
 
         _consume(g, _initial_input(), cfg)
@@ -102,7 +102,7 @@ class TestErrorHandlerInterrupt:
 
     def test_error_handler_reports_correct_phase1(self, config):
         mcp = MockECOMCPServer(scenario="phase1_ext_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("phase1_err")
 
         _consume(g, _initial_input(), cfg)
@@ -112,7 +112,7 @@ class TestErrorHandlerInterrupt:
 
     def test_error_handler_reports_correct_phase2(self, config):
         mcp = MockECOMCPServer(scenario="phase2_sta_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("phase2_err")
 
         _consume(g, _initial_input(), cfg)
@@ -122,7 +122,7 @@ class TestErrorHandlerInterrupt:
 
     def test_error_handler_reports_correct_phase3(self, config):
         mcp = MockECOMCPServer(scenario="phase3_fix_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("phase3_err")
 
         _consume(g, _initial_input(), cfg)
@@ -140,7 +140,7 @@ class TestErrorHandlerInterrupt:
 class TestUpdateStateReset:
     def test_reset_step_and_phase_status_before_retry(self, config):
         mcp = MockECOMCPServer(scenario="phase2_sta_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("reset_status")
 
         _consume(g, _initial_input(), cfg)
@@ -167,7 +167,7 @@ class TestUpdateStateReset:
 
     def test_reset_preserves_other_step_statuses(self, config):
         mcp = MockECOMCPServer(scenario="phase2_sta_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("preserve_others")
 
         _consume(g, _initial_input(), cfg)
@@ -230,7 +230,7 @@ class TestGetRetryStep:
 class TestErrorHandlerCommandGoto:
     def test_abort_returns_command_goto_finalize(self, config):
         mcp = MockECOMCPServer(scenario="phase2_sta_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("abort_goto")
 
         _consume(g, _initial_input(), cfg)
@@ -244,7 +244,7 @@ class TestErrorHandlerCommandGoto:
 
     def test_retry_returns_command_goto_error_step(self, config):
         mcp = MockECOMCPServer(scenario="phase2_sta_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("retry_goto")
 
         _consume(g, _initial_input(), cfg)
@@ -257,7 +257,7 @@ class TestErrorHandlerCommandGoto:
 
     def test_retry_shortcut_r_resumes(self, config):
         mcp = MockECOMCPServer(scenario="phase2_sta_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("shortcut_r")
 
         _consume(g, _initial_input(), cfg)
@@ -270,7 +270,7 @@ class TestErrorHandlerCommandGoto:
 
     def test_retry_chinese_重试_resumes(self, config):
         mcp = MockECOMCPServer(scenario="phase2_sta_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("chinese_retry")
 
         _consume(g, _initial_input(), cfg)
@@ -283,7 +283,7 @@ class TestErrorHandlerCommandGoto:
 
     def test_default_fallback_is_abort(self, config):
         mcp = MockECOMCPServer(scenario="phase2_sta_error", simulate_delay=0)
-        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver())
+        g = build_graph(mcp_server=mcp, checkpointer=MemorySaver(), skip_agent_entry=True)
         cfg = config("default_fallback")
 
         _consume(g, _initial_input(), cfg)

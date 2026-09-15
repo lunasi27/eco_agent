@@ -97,7 +97,8 @@ class TestSessionListing:
         assert by_id["job_paused"].status == STATUS_INTERRUPTED
         assert by_id["job_paused"].design_name == "designP"
         assert by_id["job_done"].status == STATUS_COMPLETED
-        assert by_id["job_done"].design_name == "designD"
+        # finalize 清空 design_name 回到对话模式
+        assert by_id["job_done"].design_name == ""
 
         # 中断中的会话排前面
         assert infos[0].thread_id == "job_paused"
