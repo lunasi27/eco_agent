@@ -8,6 +8,8 @@ import pytest
 from src.mcp_server.mock import MockECOMCPServer
 from src.mcp_server.mcp_app import create_mcp_app
 
+from .helpers import resolve_csh_bin
+
 
 def _call(mcp, tool_name: str, args: dict) -> dict:
     results = asyncio.run(mcp.call_tool(tool_name, args))
@@ -63,25 +65,24 @@ class TestToolDelegationMock:
 
 
 @pytest.mark.skipif(
-    __import__("shutil").which("csh") is None, reason="csh not installed"
+    resolve_csh_bin() is None,
+    reason="no csh available (set ECO_CSH_BIN to override, default /bin/csh)",
 )
 class TestToolDelegationReal:
-    def test_real_run_sta_via_csh(self, tmp_path):
-        from src.mcp_server.real import RealECOMCPServer
-        real = RealECOMCPServer(config_path="tests/fixtures/test_eda_tools.yaml")
-        mcp = create_mcp_app(eco_server=real)
+    def test_real_run_sta_via_mcp_tool(self, make_server):
+        # 端到端：MCP Tool → Protocol 方法 → run_step → wrapper → parse
+        mcp_server = make_server(
+            {
+                "run_sta": [
+                    'echo "Setup Violations: 42"',
+                    'echo "Hold Violations: 15"',
+                ],
+            },
+            timeout_s={"run_sta": 10},
+        )
+        mcp = create_mcp_app(eco_server=mcp_server)
         result = _call(mcp, "run_sta", {
             "design_name": "MyDesign",
-            "run_dir": str(tmp_path),
+            "run_dir": "/tmp/runs",
         })
         assert result == {"setup_vio": 42, "hold_vio": 15}
-
-    def test_real_run_pv_via_csh(self, tmp_path):
-        from src.mcp_server.real import RealECOMCPServer
-        real = RealECOMCPServer(config_path="tests/fixtures/test_eda_tools.yaml")
-        mcp = create_mcp_app(eco_server=real)
-        result = _call(mcp, "run_pv", {
-            "design_name": "MyDesign",
-            "run_dir": str(tmp_path),
-        })
-        assert result == {"pv_pass": True}

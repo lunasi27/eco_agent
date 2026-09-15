@@ -4,9 +4,9 @@
 # 占位符变量规则（Python 侧 resolve）：
 #   - {project_name}   本文件 project_name 字段
 #   - {work_dir}       本文件 work_dir 字段
-#   - {design_name}    run_context.design_name（引用本文件 project_name）
-#   - {base.xxx}       base 字典里对应的值（支持链式引用，占位符 resolve 顺序：
-#                       先 resolve 本文件内部的，再 resolve run_context 里引用本文件的）
+#   - {design_name}    run_context.design_name（先于本文件解析，step_command 里可直接用）
+#   - {fix_strategy}   MCP Tool 调用时传入（仅 fix 类 step 的命令里使用）
+#   - {base.xxx}       base 字典里的值（支持链式引用，多轮迭代直到全部展开）
 
 # ── 项目身份 ──
 project_name: "SOC_XXX_SUB"
@@ -58,8 +58,16 @@ wait_flags:
   run_xtop_fix_hold: "{base.run_xtop_fix}/output/xtop_fix_hold.tcl"
 
 # ── step_command — 每个 step 的实际调用命令 ──
-# Python 侧 resolve 占位符后，通过 $CMD 环境变量传给 wrapper 执行
-# wrapper 里 eval "$CMD"，所以支持 shell 语法（source、管道、重定向等）
+# Python 侧 resolve 占位符后，逐行写入临时命令文件，wrapper 逐行 eval "$cmd"
+# wrapper 里 eval，所以支持 shell 语法（source、管道、重定向等）
+#
+# 两种写法：
+#   单条命令：字符串
+#     run_pt_fix_setup: "pds_pteco setup"
+#   多条命令：list，按顺序执行，任意一条失败立即终止整个 step（fail-fast）
+#     run_sta:
+#       - "mkdir -p {base.run_sta_rpt}/{project_name}"
+#       - "run_sta.csh {project_name} all CTS ptpx -input {base.dataout} -output {base.run_sta_rpt}"
 step_command:
   run_eco_route:        "pds_innovus 6.ecoRt"
   run_ext:              "pds_starrc DEF_SMC"
@@ -71,3 +79,18 @@ step_command:
   run_pt_fix_leakage:   "pds_pteco leakage"
   run_pt_fix_drv:       "pds_pteco ldrc"
   run_xtop_fix_hold:    "source run_fix_hold.csh {design_name}"
+
+# ── timeout_s — 每个 step 的超时秒数 ──
+# 随项目走（大 design 调大），不随迭代变；每个 step 唯一存放处，无覆盖层级。
+# 未配置的 step 用代码兜底默认值（3600s），防止 subprocess 永久挂死。
+timeout_s:
+  run_eco_route:      3600
+  run_ext:            3600
+  run_sta:            7200
+  run_pv:             3600
+  run_signoff:        3600
+  run_pt_fix_setup:   3600
+  run_pt_fix_hold:    1800
+  run_pt_fix_leakage: 1800
+  run_pt_fix_drv:     1800
+  run_xtop_fix_hold:  1800

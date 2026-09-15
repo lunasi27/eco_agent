@@ -12,7 +12,6 @@ async def main():
     if backend == "real":
         from src.mcp_server.real import RealECOMCPServer
         eco_server = RealECOMCPServer(
-            eda_tools_path=os.environ.get("EDA_TOOLS_PATH", "config/eda_tools.yaml"),
             project_path=os.environ.get("PROJECT_CONFIG", "config/project.yaml"),
             run_context_path=os.environ.get("RUN_CONTEXT", "config/run_context.yaml"),
         )
